@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Crawl Start</title>
+  </head>
+  <body>
+    <main data-fixture="crawl-graph">
+      <h1>Crawl Start</h1>
+      <p>marker-crawl-001: start page must be first in reading order.</p>
+      <nav aria-label="fixture links">
+        <a href="./chapter-one.html">Chapter One</a>
+        <a href="./chapter-two.html#section-two">Chapter Two Fragment</a>
+        <a href="./chapter-one.html#duplicate">Duplicate Chapter One Fragment</a>
+        <a href="./deep/chapter-three.html">Deep Chapter Three</a>
+        <a href="../single-page/index.html">Outside Prefix Page</a>
+        <a href="https://example.org/external.html">External Page</a>
+      </nav>
+    </main>
+  </body>
+</html>

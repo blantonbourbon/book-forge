@@ -1,0 +1,15 @@
+{
+  "name": "book-forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate:install": "bash scripts/commands/install",
+    "format": "bash scripts/commands/format",
+    "lint": "bash scripts/commands/lint",
+    "typecheck": "bash scripts/commands/typecheck",
+    "test": "bash scripts/commands/test",
+    "build": "bash scripts/commands/build",
+    "inspect:epub": "bash scripts/inspect-epub"
+  }
+}

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" role="img" aria-label="Book Forge logo">
+  <rect width="64" height="64" fill="#1f2937" />
+  <path d="M16 14h22a10 10 0 0 1 10 10v26H26a10 10 0 0 1-10-10z" fill="#f59e0b" />
+  <path d="M23 22h18M23 30h18M23 38h12" stroke="#111827" stroke-width="4" stroke-linecap="round" />
+</svg>

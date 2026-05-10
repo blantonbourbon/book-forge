@@ -1,0 +1,17 @@
+{
+  "fixture": "oversized-slow",
+  "routes": [
+    {
+      "path": "/oversized-slow/oversized.html",
+      "status": 200,
+      "bodyFile": "oversized.html",
+      "declaredBytes": 10485761
+    },
+    {
+      "path": "/oversized-slow/slow.html",
+      "status": 200,
+      "bodyFile": "slow.html",
+      "delayMs": 3500
+    }
+  ]
+}

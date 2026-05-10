@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Unsafe Fixture</title>
+    <script>
+      window.fixtureShouldBeRemoved = true;
+    </script>
+  </head>
+  <body onload="fixtureShouldBeRemoved()">
+    <article>
+      <h1 onclick="fixtureShouldBeRemoved()">Unsafe Fixture</h1>
+      <p>marker-unsafe-001: safe text should remain readable.</p>
+      <a href="javascript:fixtureShouldBeRemoved()">Unsafe Link</a>
+      <form action="/submit"><input name="unsafe" /></form>
+      <iframe src="https://example.org/embed"></iframe>
+      <object data="unsafe.bin"></object>
+      <embed src="unsafe.swf" />
+    </article>
+  </body>
+</html>

@@ -1,0 +1,28 @@
+---
+const boundaries = [
+  "Astro frontend shell",
+  "Rust backend API",
+  "Rust converter core",
+  "EPUB inspection tooling",
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Book Forge</title>
+  </head>
+  <body>
+    <main>
+      <h1>Book Forge</h1>
+      <p>
+        Foundation scaffold for the HTML-to-EPUB workflow. Product UI behavior
+        will be implemented by the frontend milestone.
+      </p>
+      <ul>
+        {boundaries.map((boundary) => <li>{boundary}</li>)}
+      </ul>
+    </main>
+  </body>
+</html>

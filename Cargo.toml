@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "crates/book-forge-converter",
+    "crates/book-forge-server",
+    "tools/epub-inspector",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = { version = "4.6.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }

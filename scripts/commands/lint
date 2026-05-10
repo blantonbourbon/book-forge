@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "$0")/_env.sh"
+
+"${CARGO_BIN}" clippy --workspace --all-targets --locked -- -D warnings
+npm run lint --prefix frontend --if-present

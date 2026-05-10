@@ -1,0 +1,25 @@
+{
+  "fixture": "redirects",
+  "routes": [
+    {
+      "path": "/redirects/to-safe",
+      "status": 302,
+      "location": "/single-page/index.html"
+    },
+    {
+      "path": "/redirects/to-private",
+      "status": 302,
+      "location": "http://127.0.0.1:3100/private-target"
+    },
+    {
+      "path": "/redirects/loop-a",
+      "status": 302,
+      "location": "/redirects/loop-b"
+    },
+    {
+      "path": "/redirects/loop-b",
+      "status": 302,
+      "location": "/redirects/loop-a"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "sets": {
+    "singlePage": "html/single-page/index.html",
+    "crawlGraph": "html/crawl-graph/index.html",
+    "images": "html/images/index.html",
+    "unsafeHtml": "html/unsafe-html/index.html",
+    "failedResources": "html/failed-resources/index.html",
+    "redirects": "html/redirects/routes.json",
+    "oversizedSlow": "html/oversized-slow/routes.json",
+    "semanticContent": "html/semantic-content/index.html"
+  }
+}

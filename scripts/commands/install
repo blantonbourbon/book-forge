@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "$0")/_env.sh"
+
+if [ -f package-lock.json ]; then
+  npm ci
+elif [ -f package.json ]; then
+  npm install
+fi
+
+if [ -f frontend/package-lock.json ]; then
+  npm ci --prefix frontend
+elif [ -f frontend/package.json ]; then
+  npm install --prefix frontend
+fi
+
+"${CARGO_BIN}" fetch --locked

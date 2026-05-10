@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" role="img" aria-label="Fixture diagram">
+  <rect width="96" height="48" fill="#e0f2fe" />
+  <circle cx="20" cy="24" r="10" fill="#0284c7" />
+  <circle cx="76" cy="24" r="10" fill="#16a34a" />
+  <path d="M32 24h32" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+</svg>

@@ -1,0 +1,8 @@
+[package]
+name = "book-forge-converter"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"

@@ -1,0 +1,12 @@
+[package]
+name = "book-forge-server"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "book-forge-server"
+path = "src/main.rs"
