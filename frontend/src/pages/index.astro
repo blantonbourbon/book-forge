@@ -6,8 +6,13 @@ import {
   MAX_CRAWL_DEPTH,
   MAX_CRAWL_PAGES,
 } from "../lib/form-state";
+import {
+  WEREAD_GUIDANCE_COPY,
+  refreshRecoveryPresentation,
+} from "../lib/terminal-state";
 
 const defaults = DEFAULT_FORM_VALUES;
+const initialRecovery = refreshRecoveryPresentation();
 ---
 
 <html lang="en">
@@ -377,7 +382,7 @@ const defaults = DEFAULT_FORM_VALUES;
               <p class="eyebrow">Status</p>
               <h2>Progress and download</h2>
             </div>
-            <p id="status-text">Ready to configure a conversion.</p>
+            <p id="status-text">{initialRecovery.statusText}</p>
             <div
               id="progress-wrap"
               class="progress-wrap"
@@ -427,15 +432,21 @@ const defaults = DEFAULT_FORM_VALUES;
               <p class="eyebrow">WeRead</p>
               <h2>EPUB export guidance</h2>
             </div>
-            <p>
-              Book Forge only creates an EPUB download. To use the result with
-              WeRead or another reader, download the `.epub` file after a job
-              completes and import it manually in the reader app.
+            <p>{WEREAD_GUIDANCE_COPY.body}</p>
+            <p>{WEREAD_GUIDANCE_COPY.boundary}</p>
+            <p id="weread-action-note" class="help">
+              {WEREAD_GUIDANCE_COPY.waitingNote}
             </p>
-            <p>
-              This page never asks for usernames, passwords, cookies, tokens, QR
-              login, or API keys, and it does not send files directly to WeRead.
-            </p>
+            <a
+              id="weread-download-link"
+              class="download-link weread-download-link"
+              role="link"
+              aria-describedby="weread-action-note"
+              aria-disabled="true"
+              tabindex="0"
+            >
+              {WEREAD_GUIDANCE_COPY.waitingActionLabel}
+            </a>
           </section>
         </aside>
       </section>
@@ -445,7 +456,6 @@ const defaults = DEFAULT_FORM_VALUES;
       import {
         ApiClientError,
         createJob,
-        downloadUrlForJob,
         getJob,
         type ApiErrorBody,
         type ApiWarning,
@@ -463,6 +473,13 @@ const defaults = DEFAULT_FORM_VALUES;
         type UiPhase,
         type ValidationResult,
       } from "../lib/form-state";
+      import {
+        jobPresentationForJob,
+        pollingFailurePresentation,
+        preStartFailurePresentation,
+        wereadActionForDownload,
+        type WeReadAction,
+      } from "../lib/terminal-state";
 
       const form = document.querySelector<HTMLFormElement>("#conversion-form");
       const validationSummary = document.querySelector<HTMLElement>(
@@ -486,6 +503,12 @@ const defaults = DEFAULT_FORM_VALUES;
       const errorList = document.querySelector<HTMLElement>("#error-list");
       const downloadLink =
         document.querySelector<HTMLAnchorElement>("#download-link");
+      const wereadActionNote = document.querySelector<HTMLElement>(
+        "#weread-action-note",
+      );
+      const wereadDownloadLink = document.querySelector<HTMLAnchorElement>(
+        "#weread-download-link",
+      );
 
       const summaryJob = document.querySelector<HTMLElement>("#summary-job");
       const summaryMode = document.querySelector<HTMLElement>("#summary-mode");
@@ -536,9 +559,15 @@ const defaults = DEFAULT_FORM_VALUES;
         renderMode();
         renderOutputSummary();
         renderSubmitState();
+        renderWereadAction(wereadActionForDownload(null));
         form.addEventListener("input", handleFormInput);
         form.addEventListener("change", handleFormInput);
         form.addEventListener("submit", handleSubmit);
+        wereadDownloadLink?.addEventListener("click", (event) => {
+          if (wereadDownloadLink.getAttribute("aria-disabled") === "true") {
+            event.preventDefault();
+          }
+        });
       }
 
       function handleFormInput() {
@@ -576,6 +605,7 @@ const defaults = DEFAULT_FORM_VALUES;
         currentJobId = null;
         renderMessages([], []);
         renderDownload(null);
+        renderWereadAction(wereadActionForDownload(null));
         renderSubmittedSummary("Starting…");
         announce("Submitting conversion job…");
 
@@ -593,10 +623,12 @@ const defaults = DEFAULT_FORM_VALUES;
           startPolling(created.id);
         } catch (error) {
           const apiError = normalizeError(error);
-          setPhase("failed");
-          renderMessages([], [apiError]);
-          renderDownload(null);
-          announce(`Job was not started: ${apiError.message}`);
+          const presentation = preStartFailurePresentation(apiError);
+          setPhase(presentation.phase);
+          renderMessages([], presentation.errors);
+          renderDownload(presentation.download.href);
+          renderWereadAction(presentation.weread);
+          announce(presentation.statusText);
         }
       }
 
@@ -615,10 +647,12 @@ const defaults = DEFAULT_FORM_VALUES;
           } catch (error) {
             clearPollTimer();
             const apiError = normalizeError(error);
-            setPhase("failed");
-            renderMessages([], [apiError]);
-            renderDownload(null);
-            announce(`Progress could not be refreshed: ${apiError.message}`);
+            const presentation = pollingFailurePresentation(apiError);
+            setPhase(presentation.phase);
+            renderMessages([], presentation.errors);
+            renderDownload(presentation.download.href);
+            renderWereadAction(presentation.weread);
+            announce(presentation.statusText);
           }
         };
 
@@ -627,23 +661,19 @@ const defaults = DEFAULT_FORM_VALUES;
       }
 
       function renderJob(job: JobResponse) {
+        const presentation = jobPresentationForJob(job);
         const percent = clampProgress(job.progress?.percent ?? 0);
-        const statusLabel = statusLabelFor(job.status);
-        const progressBits = [
-          `${percent}%`,
-          job.progress?.pagesFetched !== undefined
-            ? `${job.progress.pagesFetched} fetched`
-            : undefined,
-          job.progress?.pagesSkipped !== undefined
-            ? `${job.progress.pagesSkipped} skipped`
-            : undefined,
-        ].filter(Boolean);
-
-        renderProgress(percent, job.status !== "failed");
+        renderProgress(percent, presentation.progressVisible);
         renderSubmittedSummary(job.id);
-        renderMessages(job.warnings ?? [], job.errors ?? []);
-        renderDownload(downloadUrlForJob(job));
-        announce(`${statusLabel}: ${progressBits.join(", ")}.`);
+        renderMessages(
+          job.warnings ?? [],
+          job.errors ?? [],
+          presentation.warningHeading,
+          presentation.errorHeading,
+        );
+        renderDownload(presentation.download.href);
+        renderWereadAction(presentation.weread);
+        announce(presentation.statusText);
       }
 
       function renderMode() {
@@ -744,9 +774,14 @@ const defaults = DEFAULT_FORM_VALUES;
         jobSummary.hidden = false;
       }
 
-      function renderMessages(warnings: ApiWarning[], errors: ApiErrorBody[]) {
-        renderMessageList(warningList, warnings, "Warnings");
-        renderMessageList(errorList, errors, "Errors");
+      function renderMessages(
+        warnings: ApiWarning[],
+        errors: ApiErrorBody[],
+        warningHeading = "Warnings",
+        errorHeading = "Errors",
+      ) {
+        renderMessageList(warningList, warnings, warningHeading);
+        renderMessageList(errorList, errors, errorHeading);
       }
 
       function renderMessageList(
@@ -793,6 +828,30 @@ const defaults = DEFAULT_FORM_VALUES;
         downloadLink.href = url;
         downloadLink.hidden = false;
         downloadLink.setAttribute("aria-disabled", "false");
+      }
+
+      function renderWereadAction(action: WeReadAction) {
+        if (wereadActionNote) {
+          wereadActionNote.textContent = action.note;
+        }
+
+        if (!wereadDownloadLink) {
+          return;
+        }
+
+        wereadDownloadLink.textContent = action.label;
+        wereadDownloadLink.setAttribute(
+          "aria-disabled",
+          String(!action.enabled),
+        );
+        wereadDownloadLink.tabIndex = 0;
+
+        if (action.enabled && action.href) {
+          wereadDownloadLink.href = action.href;
+          return;
+        }
+
+        wereadDownloadLink.removeAttribute("href");
       }
 
       function renderSubmitState() {
@@ -903,15 +962,6 @@ const defaults = DEFAULT_FORM_VALUES;
 
       function isTerminal(job: JobResponse): boolean {
         return job.status === "completed" || job.status === "failed";
-      }
-
-      function statusLabelFor(status: JobResponse["status"]): string {
-        return {
-          queued: "Queued",
-          running: "Running",
-          completed: "Completed",
-          failed: "Failed",
-        }[status];
       }
 
       function clampProgress(value: number): number {

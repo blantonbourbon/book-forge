@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createJob, getJob, resolveApiOrigin } from "./api";
+import { createJob, downloadUrlForJob, getJob, resolveApiOrigin } from "./api";
 
 describe("API origin resolution", () => {
   it("uses same-origin browser requests so dev proxy and production static serving work", () => {
@@ -115,6 +115,44 @@ describe("Book Forge API client", () => {
       fields: ["sourceUrl"],
       status: 422,
     });
+  });
+
+  it("gates downloads to completed jobs with a current download URL", () => {
+    const base = {
+      id: "job-1",
+      mode: "single" as const,
+      summary: {},
+      progress: { percent: 0 },
+      warnings: [],
+      errors: [],
+    };
+
+    expect(
+      downloadUrlForJob(
+        {
+          ...base,
+          status: "completed" as const,
+          downloadUrl: "/api/jobs/job-1/download",
+        },
+        "http://127.0.0.1:3100",
+      ),
+    ).toBe("http://127.0.0.1:3100/api/jobs/job-1/download");
+    expect(
+      downloadUrlForJob({
+        ...base,
+        status: "completed" as const,
+      }),
+    ).toBeNull();
+
+    for (const status of ["queued", "running", "failed"] as const) {
+      expect(
+        downloadUrlForJob({
+          ...base,
+          status,
+          downloadUrl: "/api/jobs/job-1/download",
+        }),
+      ).toBeNull();
+    }
   });
 });
 
