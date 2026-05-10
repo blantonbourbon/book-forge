@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ego_tree::NodeRef;
 use scraper::{ElementRef, Html, Selector, node::Node};
@@ -8,13 +8,31 @@ use crate::{
     ConversionError, ConversionOptions, ConversionWarning,
     metadata::{SanitizedMetadata, sanitize_metadata_value},
     text::{collapse_whitespace, escape_xml_attr, escape_xml_text, strip_html_tags},
+    url_tools::{normalize_page_url, normalize_resource_url},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Chapter {
     pub(crate) title: String,
     pub(crate) xhtml: String,
     pub(crate) warnings: Vec<ConversionWarning>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChapterAnalysis {
+    pub(crate) title: String,
+    pub(crate) ids: HashSet<String>,
+    pub(crate) links: Vec<String>,
+    pub(crate) images: Vec<String>,
+}
+
+pub(crate) struct LinkRewriteContext<'a> {
+    pub(crate) chapter_paths: &'a HashMap<String, String>,
+    pub(crate) chapter_ids: &'a HashMap<String, HashSet<String>>,
+}
+
+pub(crate) struct ImageRewriteContext<'a> {
+    pub(crate) packaged_paths: &'a HashMap<String, String>,
 }
 
 pub(crate) fn extract_single_chapter(
@@ -23,20 +41,66 @@ pub(crate) fn extract_single_chapter(
     metadata: &SanitizedMetadata,
     options: &ConversionOptions,
 ) -> Result<Chapter, ConversionError> {
-    let sanitized_html = sanitize_html_fragment(html);
-    let document = Html::parse_document(&sanitized_html);
+    let analysis = analyze_chapter(html, source_url, metadata)?;
+    render_chapter(
+        html,
+        source_url,
+        metadata,
+        options,
+        1,
+        &analysis.title,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn analyze_chapter(
+    html: &str,
+    _source_url: &Url,
+    metadata: &SanitizedMetadata,
+) -> Result<ChapterAnalysis, ConversionError> {
+    let document = Html::parse_document(html);
     let root = select_reading_root(&document).ok_or(ConversionError::NoReadableContent)?;
     let ids = collect_ids(root);
-    let context = RenderContext {
-        source_url,
-        ids,
-        include_images: options.include_images,
-    };
 
     let visible_text = collapse_whitespace(&visible_text_for_children(root));
     if visible_text.is_empty() {
         return Err(ConversionError::NoReadableContent);
     }
+
+    let title = first_heading(root)
+        .or_else(|| document_title(&document))
+        .unwrap_or_else(|| metadata.title.clone());
+    let title = sanitize_metadata_value(&title, &metadata.title);
+
+    Ok(ChapterAnalysis {
+        title,
+        ids,
+        links: collect_attribute_values(root, "a", "href"),
+        images: collect_attribute_values(root, "img", "src"),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_chapter(
+    html: &str,
+    source_url: &Url,
+    metadata: &SanitizedMetadata,
+    options: &ConversionOptions,
+    chapter_number: usize,
+    title: &str,
+    link_rewrites: Option<&LinkRewriteContext<'_>>,
+    image_rewrites: Option<&ImageRewriteContext<'_>>,
+) -> Result<Chapter, ConversionError> {
+    let document = Html::parse_document(html);
+    let root = select_reading_root(&document).ok_or(ConversionError::NoReadableContent)?;
+    let context = RenderContext {
+        source_url,
+        ids: collect_ids(root),
+        include_images: options.include_images,
+        link_rewrites,
+        image_rewrites,
+    };
 
     let mut body = String::new();
     for child in root.children() {
@@ -47,25 +111,13 @@ pub(crate) fn extract_single_chapter(
         return Err(ConversionError::NoReadableContent);
     }
 
-    let title = first_heading(root)
-        .or_else(|| document_title(&document))
-        .unwrap_or_else(|| metadata.title.clone());
-    let title = sanitize_metadata_value(&title, &metadata.title);
-    let xhtml = chapter_document(&metadata.language, &title, &body);
+    let xhtml = chapter_document(&metadata.language, title, chapter_number, &body);
 
     Ok(Chapter {
-        title,
+        title: title.to_string(),
         xhtml,
         warnings: Vec::new(),
     })
-}
-
-fn sanitize_html_fragment(html: &str) -> String {
-    ammonia::Builder::default()
-        .add_generic_attributes(&["id"])
-        .link_rel(None)
-        .clean(html)
-        .to_string()
 }
 
 fn select_reading_root(document: &Html) -> Option<ElementRef<'_>> {
@@ -99,12 +151,24 @@ struct RenderContext<'a> {
     source_url: &'a Url,
     ids: HashSet<String>,
     include_images: bool,
+    link_rewrites: Option<&'a LinkRewriteContext<'a>>,
+    image_rewrites: Option<&'a ImageRewriteContext<'a>>,
 }
 
 fn collect_ids(root: ElementRef<'_>) -> HashSet<String> {
     root.descendants()
         .filter_map(ElementRef::wrap)
         .filter_map(|element| element.attr("id").and_then(sanitize_id))
+        .collect()
+}
+
+fn collect_attribute_values(root: ElementRef<'_>, selector: &str, attribute: &str) -> Vec<String> {
+    let selector = Selector::parse(selector).expect("static selector should parse");
+    root.select(&selector)
+        .filter_map(|element| element.attr(attribute))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+        .map(str::to_string)
         .collect()
 }
 
@@ -174,10 +238,14 @@ fn render_anchor(element: ElementRef<'_>, context: &RenderContext<'_>, output: &
         return;
     }
 
-    if let Some(href) = element
-        .attr("href")
-        .and_then(|href| safe_href(href, context.source_url, &context.ids))
-    {
+    if let Some(href) = element.attr("href").and_then(|href| {
+        safe_href(
+            href,
+            context.source_url,
+            &context.ids,
+            context.link_rewrites,
+        )
+    }) {
         output.push_str("<a href=\"");
         output.push_str(&escape_xml_attr(&href));
         output.push_str("\">");
@@ -189,15 +257,28 @@ fn render_anchor(element: ElementRef<'_>, context: &RenderContext<'_>, output: &
 }
 
 fn render_image_alt(element: ElementRef<'_>, context: &RenderContext<'_>, output: &mut String) {
-    let Some(alt) = element
+    let alt = element
         .attr("alt")
         .map(|alt| sanitize_metadata_value(alt, ""))
-        .filter(|alt| !alt.is_empty())
-    else {
-        return;
-    };
+        .unwrap_or_default();
 
-    let _include_images = context.include_images;
+    if context.include_images
+        && let Some(src) = element
+            .attr("src")
+            .and_then(|src| safe_image_src(src, context.source_url, context.image_rewrites))
+    {
+        output.push_str("<img src=\"");
+        output.push_str(&escape_xml_attr(&src));
+        output.push_str("\" alt=\"");
+        output.push_str(&escape_xml_attr(&alt));
+        output.push_str("\" />");
+        return;
+    }
+
+    if alt.is_empty() {
+        return;
+    }
+
     output.push_str("<span>");
     output.push_str(&escape_xml_text(&alt));
     output.push_str("</span>");
@@ -280,7 +361,12 @@ fn safe_xhtml_tag(name: &str) -> Option<&'static str> {
     }
 }
 
-fn safe_href(raw_href: &str, source_url: &Url, ids: &HashSet<String>) -> Option<String> {
+fn safe_href(
+    raw_href: &str,
+    source_url: &Url,
+    ids: &HashSet<String>,
+    link_rewrites: Option<&LinkRewriteContext<'_>>,
+) -> Option<String> {
     let href = raw_href.trim();
     if href.is_empty() || href.chars().any(char::is_control) {
         return None;
@@ -289,6 +375,10 @@ fn safe_href(raw_href: &str, source_url: &Url, ids: &HashSet<String>) -> Option<
     if let Some(fragment) = href.strip_prefix('#') {
         let id = sanitize_id(fragment)?;
         return ids.contains(&id).then(|| format!("#{id}"));
+    }
+
+    if let Some(rewrites) = link_rewrites {
+        return safe_crawl_href(href, source_url, ids, rewrites);
     }
 
     if let Ok(url) = Url::parse(href) {
@@ -307,6 +397,84 @@ fn safe_href(raw_href: &str, source_url: &Url, ids: &HashSet<String>) -> Option<
     }
 }
 
+fn safe_crawl_href(
+    href: &str,
+    source_url: &Url,
+    ids: &HashSet<String>,
+    rewrites: &LinkRewriteContext<'_>,
+) -> Option<String> {
+    if let Ok(url) = Url::parse(href) {
+        return match url.scheme() {
+            "http" | "https" => rewrite_http_href(&url, source_url, ids, rewrites),
+            "mailto" => Some(href.to_string()),
+            _ => None,
+        };
+    }
+
+    let resolved = source_url.join(href).ok()?;
+    match resolved.scheme() {
+        "http" | "https" => rewrite_http_href(&resolved, source_url, ids, rewrites),
+        _ => None,
+    }
+}
+
+fn rewrite_http_href(
+    resolved: &Url,
+    source_url: &Url,
+    ids: &HashSet<String>,
+    rewrites: &LinkRewriteContext<'_>,
+) -> Option<String> {
+    let target_key = normalize_page_url(resolved);
+    let current_key = normalize_page_url(source_url);
+
+    let Some(target_path) = rewrites.chapter_paths.get(&target_key) else {
+        return Some(resolved.to_string());
+    };
+
+    let fragment = resolved.fragment().and_then(sanitize_id);
+    let fragment = fragment.filter(|fragment| {
+        if target_key == current_key {
+            ids.contains(fragment)
+        } else {
+            rewrites
+                .chapter_ids
+                .get(&target_key)
+                .is_some_and(|target_ids| target_ids.contains(fragment))
+        }
+    });
+
+    if target_key == current_key {
+        return fragment.map(|fragment| format!("#{fragment}"));
+    }
+
+    Some(match fragment {
+        Some(fragment) => format!("{target_path}#{fragment}"),
+        None => target_path.clone(),
+    })
+}
+
+fn safe_image_src(
+    raw_src: &str,
+    source_url: &Url,
+    image_rewrites: Option<&ImageRewriteContext<'_>>,
+) -> Option<String> {
+    let src = raw_src.trim();
+    if src.is_empty() || src.chars().any(char::is_control) {
+        return None;
+    }
+
+    let rewrites = image_rewrites?;
+    let resolved = Url::parse(src).or_else(|_| source_url.join(src)).ok()?;
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return None;
+    }
+
+    rewrites
+        .packaged_paths
+        .get(&normalize_resource_url(&resolved))
+        .cloned()
+}
+
 fn same_document(left: &Url, right: &Url) -> bool {
     left.scheme() == right.scheme()
         && left.host_str() == right.host_str()
@@ -315,7 +483,7 @@ fn same_document(left: &Url, right: &Url) -> bool {
         && left.query() == right.query()
 }
 
-fn sanitize_id(raw: &str) -> Option<String> {
+pub(crate) fn sanitize_id(raw: &str) -> Option<String> {
     let mut id = String::new();
     for character in raw.trim().chars() {
         if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':' | '.') {
@@ -377,7 +545,7 @@ fn collect_visible_text(node: NodeRef<'_, Node>, output: &mut String) {
     }
 }
 
-fn chapter_document(language: &str, title: &str, body: &str) -> String {
+fn chapter_document(language: &str, title: &str, chapter_number: usize, body: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="{language}" xml:lang="{language}">
@@ -386,7 +554,7 @@ fn chapter_document(language: &str, title: &str, body: &str) -> String {
   <title>{title}</title>
 </head>
 <body>
-  <section id="chapter-1">
+  <section id="chapter-{chapter_number}">
     {body}
   </section>
 </body>
@@ -394,6 +562,7 @@ fn chapter_document(language: &str, title: &str, body: &str) -> String {
 "#,
         language = escape_xml_attr(language),
         title = escape_xml_text(title),
+        chapter_number = chapter_number,
         body = body
     )
 }

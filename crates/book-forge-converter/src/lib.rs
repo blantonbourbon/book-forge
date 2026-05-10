@@ -1,7 +1,9 @@
+mod crawl;
 mod epub;
 mod html;
 mod metadata;
 mod text;
+mod url_tools;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -30,11 +32,57 @@ pub struct ConversionOptions {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CrawlOptions {
+    pub prefix_url: String,
+    pub max_depth: usize,
+    pub max_pages: usize,
+    pub max_total_bytes: usize,
+    pub max_duration_millis: u64,
+}
+
+impl Default for CrawlOptions {
+    fn default() -> Self {
+        Self {
+            prefix_url: String::new(),
+            max_depth: 3,
+            max_pages: 50,
+            max_total_bytes: 10 * 1024 * 1024,
+            max_duration_millis: 30_000,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SinglePageInput {
     pub source_url: String,
     pub html: String,
     pub metadata: BookMetadata,
     pub options: ConversionOptions,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CrawlPage {
+    pub url: String,
+    pub html: Option<String>,
+    pub failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CrawlResource {
+    pub url: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+    pub failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CrawlInput {
+    pub start_url: String,
+    pub pages: Vec<CrawlPage>,
+    pub resources: Vec<CrawlResource>,
+    pub metadata: BookMetadata,
+    pub options: ConversionOptions,
+    pub crawl: CrawlOptions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -122,7 +170,11 @@ pub fn convert_single_page(input: SinglePageInput) -> Result<ConversionResult, C
     })
 }
 
-fn validate_source_url(source_url: &str) -> Result<Url, ConversionError> {
+pub fn convert_crawl(input: CrawlInput) -> Result<ConversionResult, ConversionError> {
+    crawl::convert_crawl(input)
+}
+
+pub(crate) fn validate_source_url(source_url: &str) -> Result<Url, ConversionError> {
     let parsed = Url::parse(source_url).map_err(|_| ConversionError::InvalidSourceUrl {
         message: "Source URL must be an absolute HTTP or HTTPS URL.".to_string(),
     })?;

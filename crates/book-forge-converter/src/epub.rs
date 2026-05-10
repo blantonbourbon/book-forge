@@ -9,13 +9,27 @@ use crate::{
     text::{escape_xml_attr, escape_xml_text},
 };
 
-const CHAPTER_PATH: &str = "EPUB/chapters/chapter-1.xhtml";
 const NAV_PATH: &str = "EPUB/nav.xhtml";
 const PACKAGE_PATH: &str = "EPUB/package.opf";
+
+#[derive(Debug, Clone)]
+pub(crate) struct EpubResource {
+    pub(crate) path: String,
+    pub(crate) media_type: String,
+    pub(crate) bytes: Vec<u8>,
+}
 
 pub(crate) fn generate_single_epub(
     metadata: &SanitizedMetadata,
     chapter: &Chapter,
+) -> Result<Vec<u8>, ConversionError> {
+    generate_epub(metadata, std::slice::from_ref(chapter), &[])
+}
+
+pub(crate) fn generate_epub(
+    metadata: &SanitizedMetadata,
+    chapters: &[Chapter],
+    resources: &[EpubResource],
 ) -> Result<Vec<u8>, ConversionError> {
     let cursor = Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(cursor);
@@ -29,13 +43,20 @@ pub(crate) fn generate_single_epub(
     zip.write_all(container_xml().as_bytes())?;
 
     zip.start_file(PACKAGE_PATH, deflated)?;
-    zip.write_all(package_opf(metadata).as_bytes())?;
+    zip.write_all(package_opf(metadata, chapters, resources).as_bytes())?;
 
     zip.start_file(NAV_PATH, deflated)?;
-    zip.write_all(nav_xhtml(&metadata.language, &chapter.title).as_bytes())?;
+    zip.write_all(nav_xhtml(&metadata.language, chapters).as_bytes())?;
 
-    zip.start_file(CHAPTER_PATH, deflated)?;
-    zip.write_all(chapter.xhtml.as_bytes())?;
+    for (index, chapter) in chapters.iter().enumerate() {
+        zip.start_file(format!("EPUB/{}", chapter_href(index)), deflated)?;
+        zip.write_all(chapter.xhtml.as_bytes())?;
+    }
+
+    for resource in resources {
+        zip.start_file(format!("EPUB/{}", resource.path), deflated)?;
+        zip.write_all(&resource.bytes)?;
+    }
 
     Ok(zip.finish()?.into_inner())
 }
@@ -50,7 +71,11 @@ fn container_xml() -> &'static str {
 "#
 }
 
-fn package_opf(metadata: &SanitizedMetadata) -> String {
+fn package_opf(
+    metadata: &SanitizedMetadata,
+    chapters: &[Chapter],
+    resources: &[EpubResource],
+) -> String {
     let description = if metadata.description.is_empty() {
         String::new()
     } else {
@@ -59,6 +84,31 @@ fn package_opf(metadata: &SanitizedMetadata) -> String {
             escape_xml_text(&metadata.description)
         )
     };
+
+    let mut manifest_items = String::new();
+    for index in 0..chapters.len() {
+        manifest_items.push_str(&format!(
+            "    <item id=\"chapter-{number}\" href=\"{href}\" media-type=\"application/xhtml+xml\"/>\n",
+            number = index + 1,
+            href = escape_xml_attr(&chapter_href(index))
+        ));
+    }
+    for (index, resource) in resources.iter().enumerate() {
+        manifest_items.push_str(&format!(
+            "    <item id=\"resource-{number}\" href=\"{href}\" media-type=\"{media_type}\"/>\n",
+            number = index + 1,
+            href = escape_xml_attr(&resource.path),
+            media_type = escape_xml_attr(&resource.media_type)
+        ));
+    }
+
+    let mut spine_items = String::new();
+    for index in 0..chapters.len() {
+        spine_items.push_str(&format!(
+            "    <itemref idref=\"chapter-{number}\"/>\n",
+            number = index + 1
+        ));
+    }
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -72,11 +122,9 @@ fn package_opf(metadata: &SanitizedMetadata) -> String {
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="chapter-1" href="chapters/chapter-1.xhtml" media-type="application/xhtml+xml"/>
-  </manifest>
+{manifest_items}  </manifest>
   <spine>
-    <itemref idref="chapter-1"/>
-  </spine>
+{spine_items}  </spine>
 </package>
 "#,
         language = escape_xml_attr(&metadata.language),
@@ -84,11 +132,22 @@ fn package_opf(metadata: &SanitizedMetadata) -> String {
         title = escape_xml_text(&metadata.title),
         author = escape_xml_text(&metadata.author),
         description = description,
-        modified = escape_xml_text(&metadata.modified)
+        modified = escape_xml_text(&metadata.modified),
+        manifest_items = manifest_items,
+        spine_items = spine_items
     )
 }
 
-fn nav_xhtml(language: &str, chapter_title: &str) -> String {
+fn nav_xhtml(language: &str, chapters: &[Chapter]) -> String {
+    let mut entries = String::new();
+    for (index, chapter) in chapters.iter().enumerate() {
+        entries.push_str(&format!(
+            "      <li><a href=\"{href}\">{chapter_title}</a></li>\n",
+            href = escape_xml_attr(&chapter_href(index)),
+            chapter_title = escape_xml_text(&chapter.title)
+        ));
+    }
+
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="{language}" xml:lang="{language}">
@@ -100,13 +159,16 @@ fn nav_xhtml(language: &str, chapter_title: &str) -> String {
   <nav epub:type="toc" id="toc">
     <h1>Table of Contents</h1>
     <ol>
-      <li><a href="chapters/chapter-1.xhtml">{chapter_title}</a></li>
-    </ol>
+{entries}    </ol>
   </nav>
 </body>
 </html>
 "#,
         language = escape_xml_attr(language),
-        chapter_title = escape_xml_text(chapter_title)
+        entries = entries
     )
+}
+
+pub(crate) fn chapter_href(index: usize) -> String {
+    format!("chapters/chapter-{}.xhtml", index + 1)
 }

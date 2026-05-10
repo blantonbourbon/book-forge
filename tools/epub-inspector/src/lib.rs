@@ -811,6 +811,7 @@ fn collapse_whitespace(input: &str) -> String {
 
 fn descendant_text(node: roxmltree::Node<'_, '_>) -> String {
     node.descendants()
+        .filter(roxmltree::Node::is_text)
         .filter_map(|descendant| descendant.text())
         .collect::<Vec<_>>()
         .join(" ")
