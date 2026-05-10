@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -18,6 +19,7 @@ use uuid::Uuid;
 use crate::{
     errors::{ApiError, ErrorBody, sanitize_message},
     fetch::{FetchError, FetchedResponse, Fetcher, SharedFetcher},
+    security,
 };
 
 const DEFAULT_FETCH_TIMEOUT_MILLIS: u64 = 30_000;
@@ -32,6 +34,7 @@ const MAX_DURATION_MILLIS: u64 = 120_000;
 pub struct AppState {
     pub jobs: JobManager,
     pub fetcher: SharedFetcher,
+    pub static_root: Option<Arc<PathBuf>>,
 }
 
 impl AppState {
@@ -39,7 +42,13 @@ impl AppState {
         Self {
             jobs: JobManager::default(),
             fetcher,
+            static_root: None,
         }
+    }
+
+    pub fn with_static_root(mut self, static_root: PathBuf) -> Self {
+        self.static_root = static_root.canonicalize().ok().map(Arc::new);
+        self
     }
 }
 
@@ -373,6 +382,34 @@ pub fn validate_create_request(request: CreateJobRequest) -> Result<JobSummary, 
         options: request.options,
         crawl,
     })
+}
+
+pub async fn enforce_create_request_security(summary: &JobSummary) -> Result<(), ApiError> {
+    let source_url = Url::parse(&summary.source_url).map_err(|_| {
+        ApiError::validation(
+            "Source URL must be absolute HTTP or HTTPS.",
+            vec!["sourceUrl".to_string()],
+        )
+    })?;
+    security::validate_network_url(&source_url)
+        .await
+        .map_err(|error| ApiError::validation(error.message, vec!["sourceUrl".to_string()]))?;
+
+    if let Some(crawl) = &summary.crawl {
+        let prefix_url = Url::parse(&crawl.prefix_url).map_err(|_| {
+            ApiError::validation(
+                "Crawl prefix URL must be absolute HTTP or HTTPS.",
+                vec!["crawl.prefixUrl".to_string()],
+            )
+        })?;
+        security::validate_network_url(&prefix_url)
+            .await
+            .map_err(|error| {
+                ApiError::validation(error.message, vec!["crawl.prefixUrl".to_string()])
+            })?;
+    }
+
+    Ok(())
 }
 
 fn metadata_from_request(metadata: ApiMetadata, fields: &mut Vec<String>) -> BookMetadata {

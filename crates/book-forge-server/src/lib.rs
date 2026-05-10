@@ -2,6 +2,10 @@ mod api;
 mod errors;
 mod fetch;
 mod jobs;
+mod security;
+mod static_files;
+
+use std::{env, path::PathBuf};
 
 use axum::Router;
 
@@ -14,19 +18,29 @@ pub fn boundary_name() -> &'static str {
 }
 
 pub fn app() -> Router {
-    app_with_fetcher(SharedFetcher::fixture_or_http())
+    let fetcher = SharedFetcher::fixture_or_http();
+    if let Ok(static_dir) = env::var("STATIC_DIR") {
+        app_with_fetcher_and_static_dir(fetcher, PathBuf::from(static_dir))
+    } else {
+        app_with_fetcher(fetcher)
+    }
 }
 
 pub fn app_with_fetcher(fetcher: SharedFetcher) -> Router {
     api::router(AppState::new(fetcher))
 }
 
+pub fn app_with_fetcher_and_static_dir(fetcher: SharedFetcher, static_dir: PathBuf) -> Router {
+    api::router(AppState::new(fetcher).with_static_root(static_dir))
+}
+
 pub mod test_support {
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use axum::Router;
 
-    use crate::{app_with_fetcher, fetch::SharedFetcher};
+    use crate::{app_with_fetcher, app_with_fetcher_and_static_dir, fetch::SharedFetcher};
 
     pub fn fixture_app() -> Router {
         app_with_fetcher(SharedFetcher::fixture_or_http())
@@ -34,6 +48,10 @@ pub mod test_support {
 
     pub fn delayed_fixture_app(delay: Duration) -> Router {
         app_with_fetcher(SharedFetcher::fixture_or_http_with_delay(delay))
+    }
+
+    pub fn static_fixture_app(static_dir: PathBuf) -> Router {
+        app_with_fetcher_and_static_dir(SharedFetcher::fixture_or_http(), static_dir)
     }
 }
 

@@ -11,7 +11,11 @@ use uuid::Uuid;
 
 use crate::{
     errors::ApiError,
-    jobs::{AppState, CreateJobRequest, JobStatus, validate_create_request},
+    jobs::{
+        AppState, CreateJobRequest, JobStatus, enforce_create_request_security,
+        validate_create_request,
+    },
+    static_files,
 };
 
 #[derive(Serialize)]
@@ -25,7 +29,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs", any(jobs_route))
         .route("/api/jobs/{id}", any(job_status_route))
         .route("/api/jobs/{id}/download", any(download_route))
-        .fallback(api_not_found)
+        .route("/api/{*path}", any(api_not_found))
+        .fallback(static_files::serve_static)
         .with_state(state)
 }
 
@@ -48,6 +53,7 @@ async fn jobs_route(
 
     let request = parse_create_request(&body)?;
     let summary = validate_create_request(request)?;
+    enforce_create_request_security(&summary).await?;
     let response = state.jobs.create_job(state.fetcher.clone(), summary).await;
     Ok((StatusCode::ACCEPTED, Json(response)).into_response())
 }

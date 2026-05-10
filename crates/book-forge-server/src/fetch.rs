@@ -10,7 +10,11 @@ use thiserror::Error;
 use tokio::time::sleep;
 use url::Url;
 
+use crate::security;
+
 pub type FetchFuture = Pin<Box<dyn Future<Output = Result<FetchedResponse, FetchError>> + Send>>;
+
+const MAX_REDIRECTS: usize = 5;
 
 #[derive(Clone, Debug)]
 pub struct FetchedResponse {
@@ -79,7 +83,7 @@ impl FixtureOrHttpFetcher {
         let fixture_root = fixture_root.canonicalize().unwrap_or(fixture_root);
         Self {
             client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::limited(5))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("reqwest client should build"),
             fixture_root,
@@ -106,109 +110,173 @@ impl Fetcher for FixtureOrHttpFetcher {
 
 async fn fetch_fixture(
     fixture_root: &Path,
-    url: Url,
+    mut url: Url,
     fixture_delay: Duration,
     max_bytes: usize,
 ) -> Result<FetchedResponse, FetchError> {
-    let total_delay = fixture_delay.saturating_add(fixture_route_delay(&url));
-    if !total_delay.is_zero() {
-        sleep(total_delay).await;
+    for redirect_count in 0..=MAX_REDIRECTS {
+        security::validate_network_url(&url)
+            .await
+            .map_err(security_fetch_error)?;
+
+        let total_delay = fixture_delay.saturating_add(fixture_route_delay(&url));
+        if !total_delay.is_zero() {
+            sleep(total_delay).await;
+        }
+
+        if let Some(location) = fixture_redirect_location(&url) {
+            if redirect_count == MAX_REDIRECTS {
+                return Err(FetchError::new(
+                    "redirect_limit_exceeded",
+                    "Redirect handling exceeded the configured limit.",
+                ));
+            }
+            url = url.join(location).map_err(|_| {
+                FetchError::new("invalid_redirect", "Redirect target was not a valid URL.")
+            })?;
+            continue;
+        }
+
+        let relative_path = fixture_relative_path(&url).ok_or_else(|| {
+            FetchError::new(
+                "fixture_not_found",
+                "The deterministic fixture content was not available.",
+            )
+        })?;
+        let path = fixture_root.join(relative_path);
+        ensure_within_root(fixture_root, &path)?;
+
+        let bytes = tokio::fs::read(&path).await.map_err(|_| {
+            FetchError::new(
+                "fetch_failed",
+                "The deterministic fixture content was not available.",
+            )
+        })?;
+        let declared_bytes = fixture_declared_bytes(&url).unwrap_or(bytes.len());
+        if declared_bytes > max_bytes || bytes.len() > max_bytes {
+            return Err(FetchError::new(
+                "response_too_large",
+                "Fetched content exceeded the configured byte limit.",
+            ));
+        }
+
+        return Ok(FetchedResponse {
+            final_url: url.to_string(),
+            media_type: media_type_for_path(&path),
+            bytes,
+        });
     }
 
-    let relative_path = fixture_relative_path(&url).ok_or_else(|| {
-        FetchError::new(
-            "fixture_not_found",
-            "The deterministic fixture content was not available.",
-        )
-    })?;
-    let path = fixture_root.join(relative_path);
-    ensure_within_root(fixture_root, &path)?;
-
-    let bytes = tokio::fs::read(&path).await.map_err(|_| {
-        FetchError::new(
-            "fetch_failed",
-            "The deterministic fixture content was not available.",
-        )
-    })?;
-    let declared_bytes = fixture_declared_bytes(&url).unwrap_or(bytes.len());
-    if declared_bytes > max_bytes || bytes.len() > max_bytes {
-        return Err(FetchError::new(
-            "response_too_large",
-            "Fetched content exceeded the configured byte limit.",
-        ));
-    }
-
-    Ok(FetchedResponse {
-        final_url: url.to_string(),
-        media_type: media_type_for_path(&path),
-        bytes,
-    })
+    Err(FetchError::new(
+        "redirect_limit_exceeded",
+        "Redirect handling exceeded the configured limit.",
+    ))
 }
 
 async fn fetch_http(
     client: reqwest::Client,
-    url: Url,
+    mut url: Url,
     timeout: Duration,
     max_bytes: usize,
 ) -> Result<FetchedResponse, FetchError> {
     let future = async {
-        let response = client
-            .get(url.clone())
-            .header(reqwest::header::USER_AGENT, "BookForge/0.1")
-            .send()
-            .await
-            .map_err(|_| FetchError::new("fetch_failed", "Source content could not be fetched."))?;
+        for redirect_count in 0..=MAX_REDIRECTS {
+            security::validate_network_url(&url)
+                .await
+                .map_err(security_fetch_error)?;
 
-        let status = response.status();
-        if !status.is_success() {
-            return Err(FetchError::new(
-                "fetch_failed",
-                format!("Source returned HTTP status {}.", status.as_u16()),
-            ));
+            let response = client
+                .get(url.clone())
+                .header(reqwest::header::USER_AGENT, "BookForge/0.1")
+                .send()
+                .await
+                .map_err(|_| {
+                    FetchError::new("fetch_failed", "Source content could not be fetched.")
+                })?;
+
+            let status = response.status();
+            if status.is_redirection() {
+                if redirect_count == MAX_REDIRECTS {
+                    return Err(FetchError::new(
+                        "redirect_limit_exceeded",
+                        "Redirect handling exceeded the configured limit.",
+                    ));
+                }
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| {
+                        FetchError::new(
+                            "invalid_redirect",
+                            "Redirect response did not include a valid target.",
+                        )
+                    })?;
+                url = url.join(location).map_err(|_| {
+                    FetchError::new("invalid_redirect", "Redirect target was not a valid URL.")
+                })?;
+                continue;
+            }
+
+            if !status.is_success() {
+                return Err(FetchError::new(
+                    "fetch_failed",
+                    format!("Source returned HTTP status {}.", status.as_u16()),
+                ));
+            }
+
+            if response
+                .content_length()
+                .is_some_and(|length| length > max_bytes as u64)
+            {
+                return Err(FetchError::new(
+                    "response_too_large",
+                    "Fetched content exceeded the configured byte limit.",
+                ));
+            }
+
+            let final_url = response.url().to_string();
+            let media_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split(';').next())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|_| FetchError::new("fetch_failed", "Source body could not be read."))?
+                .to_vec();
+            if bytes.len() > max_bytes {
+                return Err(FetchError::new(
+                    "response_too_large",
+                    "Fetched content exceeded the configured byte limit.",
+                ));
+            }
+
+            return Ok(FetchedResponse {
+                final_url,
+                media_type,
+                bytes,
+            });
         }
 
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err(FetchError::new(
-                "response_too_large",
-                "Fetched content exceeded the configured byte limit.",
-            ));
-        }
-
-        let final_url = response.url().to_string();
-        let media_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(';').next())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| FetchError::new("fetch_failed", "Source body could not be read."))?
-            .to_vec();
-        if bytes.len() > max_bytes {
-            return Err(FetchError::new(
-                "response_too_large",
-                "Fetched content exceeded the configured byte limit.",
-            ));
-        }
-
-        Ok(FetchedResponse {
-            final_url,
-            media_type,
-            bytes,
-        })
+        Err(FetchError::new(
+            "redirect_limit_exceeded",
+            "Redirect handling exceeded the configured limit.",
+        ))
     };
 
     tokio::time::timeout(timeout, future)
         .await
         .map_err(|_| FetchError::new("fetch_timeout", "Fetching source content timed out."))?
+}
+
+fn security_fetch_error(error: security::SecurityError) -> FetchError {
+    FetchError::new(error.code, error.message)
 }
 
 fn fixture_relative_path(url: &Url) -> Option<PathBuf> {
@@ -279,6 +347,16 @@ fn media_type_for_path(path: &Path) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+fn fixture_redirect_location(url: &Url) -> Option<&'static str> {
+    match url.path() {
+        "/redirects/to-safe" => Some("/single-page/index.html"),
+        "/redirects/to-private" => Some("http://127.0.0.1:3100/private-target"),
+        "/redirects/loop-a" => Some("/redirects/loop-b"),
+        "/redirects/loop-b" => Some("/redirects/loop-a"),
+        _ => None,
+    }
 }
 
 fn fixture_route_delay(url: &Url) -> Duration {
