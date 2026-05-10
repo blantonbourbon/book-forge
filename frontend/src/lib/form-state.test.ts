@@ -43,6 +43,18 @@ describe("conversion form defaults and validation", () => {
         .sourceUrl,
     ).toContain("Only HTTP and HTTPS source URLs are supported.");
     expect(
+      validateForm({ ...base, sourceUrl: "http://127.0.0.1/private" }).errors
+        .sourceUrl,
+    ).toContain(
+      "Source URL cannot target localhost, private, link-local, or metadata addresses.",
+    );
+    expect(
+      validateForm({
+        ...base,
+        sourceUrl: "https://example.test/redirects/to-private",
+      }).canSubmit,
+    ).toBe(true);
+    expect(
       validateForm({ ...base, language: "english!" }).errors.language,
     ).toContain("Use a valid language tag such as en or zh-CN.");
   });
@@ -151,6 +163,7 @@ describe("conversion form payloads and state helpers", () => {
       },
       options: {
         includeImages: false,
+        outputTarget: "epub",
       },
     });
 

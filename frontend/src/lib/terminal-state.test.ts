@@ -8,6 +8,7 @@ import {
   pollingFailurePresentation,
   preStartFailurePresentation,
   refreshRecoveryPresentation,
+  statusMessageDisplayText,
   wereadActionForDownload,
 } from "./terminal-state";
 
@@ -37,6 +38,9 @@ describe("terminal job presentation", () => {
     });
     expect(presentation.weread.enabled).toBe(true);
     expect(presentation.canStartAnother).toBe(true);
+    expect(statusMessageDisplayText(job.warnings[0])).toBe(
+      "image_fetch_failed: Image was skipped because it could not be fetched. (https://example.test/missing.png)",
+    );
   });
 
   it("never carries a stale completed download into running or failed jobs", () => {

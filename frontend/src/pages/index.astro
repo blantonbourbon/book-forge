@@ -477,6 +477,7 @@ const initialRecovery = refreshRecoveryPresentation();
         jobPresentationForJob,
         pollingFailurePresentation,
         preStartFailurePresentation,
+        statusMessageDisplayText,
         wereadActionForDownload,
         type WeReadAction,
       } from "../lib/terminal-state";
@@ -804,9 +805,7 @@ const initialRecovery = refreshRecoveryPresentation();
         const list = document.createElement("ul");
         for (const message of messages) {
           const item = document.createElement("li");
-          item.textContent = message.affected
-            ? `${message.message} (${message.affected})`
-            : message.message;
+          item.textContent = statusMessageDisplayText(message);
           list.append(item);
         }
         container.replaceChildren(title, list);

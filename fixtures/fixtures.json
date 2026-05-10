@@ -4,6 +4,7 @@
     "singlePage": "html/single-page/index.html",
     "crawlGraph": "html/crawl-graph/index.html",
     "images": "html/images/index.html",
+    "imagesCrawl": "html/images-crawl/index.html",
     "unsafeHtml": "html/unsafe-html/index.html",
     "failedResources": "html/failed-resources/index.html",
     "redirects": "html/redirects/routes.json",

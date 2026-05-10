@@ -30,7 +30,8 @@ fn single_payload(source_url: &str, title: &str) -> Value {
             "description": "API single conversion fixture"
         },
         "options": {
-            "includeImages": false
+            "includeImages": false,
+            "outputTarget": "epub"
         }
     })
 }
@@ -46,12 +47,37 @@ fn crawl_payload(max_depth: usize, max_pages: usize) -> Value {
             "description": "API crawl conversion fixture"
         },
         "options": {
-            "includeImages": false
+            "includeImages": false,
+            "outputTarget": "epub"
         },
         "crawl": {
             "prefixUrl": "https://example.test/crawl-graph/",
             "maxDepth": max_depth,
             "maxPages": max_pages,
+            "maxTotalBytes": 1048576,
+            "maxDurationMillis": 30000
+        }
+    })
+}
+
+fn crawl_images_payload(output_target: &str) -> Value {
+    json!({
+        "sourceUrl": "https://example.test/images-crawl/index.html",
+        "mode": "crawl",
+        "metadata": {
+            "title": "API Image Crawl Fixture",
+            "author": "API Test Author",
+            "language": "en",
+            "description": "API image crawl conversion fixture"
+        },
+        "options": {
+            "includeImages": true,
+            "outputTarget": output_target
+        },
+        "crawl": {
+            "prefixUrl": "https://example.test/images-crawl/",
+            "maxDepth": 1,
+            "maxPages": 5,
             "maxTotalBytes": 1048576,
             "maxDurationMillis": 30000
         }
@@ -251,6 +277,16 @@ async fn creates_single_job_reports_status_and_downloads_safe_epub() {
     assert!(bytes.len() > 512);
     let report = inspect_epub_bytes(&bytes);
     assert!(report.ok, "inspection errors: {:?}", report.errors);
+    let package = report.package.expect("package should inspect");
+    assert_eq!(package.metadata.title, "Unsafe API Title");
+    assert_eq!(package.metadata.author, "API Test Author");
+    assert_eq!(package.metadata.language, "en");
+    assert_eq!(
+        package.metadata.description,
+        "API single conversion fixture"
+    );
+    assert_eq!(package.content_chapters.len(), 1);
+    assert_eq!(package.nav_entries.len(), 1);
 }
 
 #[tokio::test]
@@ -276,6 +312,170 @@ async fn crawl_jobs_surface_progress_and_structured_limit_warnings() {
                     .as_str()
                     .is_some_and(|message| message.contains("depth")))
     );
+}
+
+#[tokio::test]
+async fn crawl_jobs_download_multi_chapter_image_epub_with_structured_warnings() {
+    let app = fixture_app();
+    let created = create_job(app.clone(), crawl_images_payload("epub")).await;
+    let id = created["id"].as_str().expect("id should be present");
+
+    let terminal = wait_for_terminal(app.clone(), id).await;
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["mode"], "crawl");
+    assert_eq!(terminal["summary"]["options"]["includeImages"], true);
+    assert_eq!(terminal["summary"]["options"]["outputTarget"], "epub");
+    assert_eq!(
+        terminal["summary"]["crawl"]["prefixUrl"],
+        "https://example.test/images-crawl/"
+    );
+    assert_eq!(terminal["progress"]["pagesFetched"], 2);
+
+    let warnings = terminal["warnings"].as_array().expect("warnings array");
+    assert!(
+        warnings.iter().any(|warning| {
+            warning["code"] == "image_fetch_failed"
+                && warning["affected"] == "https://example.test/images/missing.png"
+        }),
+        "missing-image warning was not surfaced: {warnings:#?}"
+    );
+
+    let (status, headers, bytes) =
+        binary_request(app, Method::GET, &format!("/api/jobs/{id}/download")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/epub+zip");
+    let report = inspect_epub_bytes(&bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+    assert!(
+        report
+            .xhtml
+            .iter()
+            .flat_map(|xhtml| xhtml.srcs.iter())
+            .all(|src| !src.contains("missing.png") && !src.starts_with("http")),
+        "chapter image references should be packaged and skip failed images: {:?}",
+        report.xhtml
+    );
+
+    let package = report.package.expect("package should inspect");
+    let titles = package
+        .nav_entries
+        .iter()
+        .map(|entry| entry.label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["Image Crawl Start", "Image Crawl Second"]);
+    assert_eq!(package.content_chapters.len(), 2);
+    assert!(
+        package
+            .manifest
+            .iter()
+            .filter(|item| item.media_type.starts_with("image/"))
+            .count()
+            >= 2
+    );
+}
+
+#[tokio::test]
+async fn reader_export_target_stays_epub_only_and_automation_shapes_are_rejected() {
+    let app = fixture_app();
+    let created = create_job(app.clone(), crawl_images_payload("weread")).await;
+    let id = created["id"].as_str().expect("id should be present");
+    let terminal = wait_for_terminal(app.clone(), id).await;
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["summary"]["options"]["outputTarget"], "weread");
+
+    let (status, headers, bytes) = binary_request(
+        app.clone(),
+        Method::GET,
+        &format!("/api/jobs/{id}/download"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/epub+zip");
+    assert!(
+        headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .expect("content disposition should be ascii")
+            .ends_with(".epub\"")
+    );
+    let report = inspect_epub_bytes(&bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+
+    let mut non_epub_target = single_payload(
+        "https://example.test/single-page/index.html",
+        "Non EPUB Target",
+    );
+    non_epub_target["options"]["outputTarget"] = json!("pdf");
+    let mut direct_send = single_payload(
+        "https://example.test/single-page/index.html",
+        "Direct Send Target",
+    );
+    direct_send["options"]["directSend"] = json!(true);
+
+    for payload in [non_epub_target, direct_send] {
+        let (status, _, body) =
+            json_request(app.clone(), Method::POST, "/api/jobs", Some(payload)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+        assert_safe_error(&body);
+        assert!(body.get("id").is_none());
+    }
+}
+
+#[tokio::test]
+async fn unsafe_url_matrix_rejects_before_artifacts_or_fails_with_safe_security_status() {
+    let app = fixture_app();
+
+    for (label, source_url, expected_field) in [
+        ("malformed", "not a url", "sourceUrl"),
+        ("unsupported scheme", "file:///etc/passwd", "sourceUrl"),
+        ("loopback", "http://127.0.0.1/private", "sourceUrl"),
+        (
+            "metadata service",
+            "http://169.254.169.254/latest/meta-data/",
+            "sourceUrl",
+        ),
+    ] {
+        let (status, _, body) = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/jobs",
+            Some(single_payload(source_url, label)),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{label} should be rejected: {body:#?}"
+        );
+        assert_safe_error(&body);
+        assert_eq!(body["error"]["code"], "validation_failed");
+        assert!(
+            body["error"]["fields"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == expected_field)),
+            "{label} did not identify {expected_field}: {body:#?}"
+        );
+        assert!(body.get("id").is_none(), "{label} created a job");
+    }
+
+    let created = create_job(
+        app.clone(),
+        single_payload(
+            "https://example.test/redirects/to-private",
+            "Private Redirect",
+        ),
+    )
+    .await;
+    let id = created["id"].as_str().expect("id should be present");
+    let terminal = wait_for_terminal(app.clone(), id).await;
+    assert_eq!(terminal["status"], "failed");
+    assert_eq!(terminal["errors"][0]["code"], "unsafe_url");
+    assert_safe_error(&json!({"error": terminal["errors"][0]}));
+
+    let (status, _, body) =
+        json_request(app, Method::GET, &format!("/api/jobs/{id}/download"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "job_failed");
+    assert_safe_error(&body);
 }
 
 #[tokio::test]

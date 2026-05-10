@@ -53,7 +53,7 @@ impl AppState {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateJobRequest {
     pub source_url: Option<String>,
     pub mode: Option<String>,
@@ -73,7 +73,7 @@ pub enum JobMode {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApiMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
@@ -81,15 +81,25 @@ pub struct ApiMetadata {
     pub description: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiOptions {
-    #[serde(default)]
-    pub include_images: bool,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiOutputTarget {
+    #[default]
+    Epub,
+    Weread,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApiOptions {
+    #[serde(default)]
+    pub include_images: bool,
+    #[serde(default)]
+    pub output_target: ApiOutputTarget,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApiCrawlOptions {
     pub prefix_url: Option<String>,
     pub max_depth: Option<usize>,

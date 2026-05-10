@@ -34,6 +34,7 @@ export interface CreateJobPayload {
   };
   options: {
     includeImages: boolean;
+    outputTarget: OutputTarget;
   };
   crawl?: {
     prefixUrl: string;
@@ -189,6 +190,7 @@ export function buildCreateJobPayload(values: FormValues): CreateJobPayload {
     },
     options: {
       includeImages: values.includeImages,
+      outputTarget: values.outputTarget,
     },
   };
 

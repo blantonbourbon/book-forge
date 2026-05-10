@@ -92,6 +92,17 @@ export function wereadActionForDownload(href: string | null): WeReadAction {
   };
 }
 
+export function statusMessageDisplayText(message: {
+  code: string;
+  message: string;
+  affected?: string;
+}): string {
+  const prefix = message.code ? `${message.code}: ` : "";
+  return message.affected
+    ? `${prefix}${message.message} (${message.affected})`
+    : `${prefix}${message.message}`;
+}
+
 export function jobPresentationForJob(
   job: JobResponse,
   apiOrigin?: string,

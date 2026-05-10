@@ -23,6 +23,7 @@ describe("Book Forge API client", () => {
       },
       options: {
         includeImages: true,
+        outputTarget: "epub" as const,
       },
     };
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
@@ -105,7 +106,7 @@ describe("Book Forge API client", () => {
             language: "en",
             description: "",
           },
-          options: { includeImages: false },
+          options: { includeImages: false, outputTarget: "epub" },
         },
         { apiOrigin: "", fetcher },
       ),
