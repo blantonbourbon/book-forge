@@ -1,10 +1,13 @@
 ---
-const boundaries = [
-  "Astro frontend shell",
-  "Rust backend API",
-  "Rust converter core",
-  "EPUB inspection tooling",
-];
+import {
+  DEFAULT_FORM_VALUES,
+  DEFAULT_MAX_DURATION_MILLIS,
+  DEFAULT_MAX_TOTAL_BYTES,
+  MAX_CRAWL_DEPTH,
+  MAX_CRAWL_PAGES,
+} from "../lib/form-state";
+
+const defaults = DEFAULT_FORM_VALUES;
 ---
 
 <html lang="en">
@@ -15,15 +18,912 @@ const boundaries = [
     <link rel="stylesheet" href="/assets/book-forge.css" />
   </head>
   <body>
+    <a class="skip-link" href="#conversion-form">Skip to conversion form</a>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HTML to EPUB, safely bounded</p>
+        <h1>Book Forge</h1>
+        <p class="hero-copy">
+          Convert a single HTML page or a scoped same-site crawl into an EPUB
+          download for your reader. No account, credentials, or authentication
+          is required.
+        </p>
+      </div>
+      <div class="hero-card" aria-label="Default conversion settings">
+        <span>Default mode</span>
+        <strong>Single page</strong>
+        <span>Language</span>
+        <strong>{defaults.language}</strong>
+        <span>Crawl limits</span>
+        <strong>
+          depth {defaults.maxDepth}, pages {defaults.maxPages}
+        </strong>
+      </div>
+    </header>
+
     <main>
-      <h1>Book Forge</h1>
-      <p>
-        Foundation scaffold for the HTML-to-EPUB workflow. Product UI behavior
-        will be implemented by the frontend milestone.
-      </p>
-      <ul>
-        {boundaries.map((boundary) => <li>{boundary}</li>)}
-      </ul>
+      <section class="app-grid" aria-label="Book Forge conversion workflow">
+        <form
+          id="conversion-form"
+          class="card conversion-form"
+          novalidate
+          aria-describedby="form-help"
+        >
+          <div class="section-heading">
+            <p class="eyebrow">Configure</p>
+            <h2>Forge an EPUB</h2>
+            <p id="form-help">
+              Start with an HTTP or HTTPS source. Client-side validation catches
+              required fields, unsupported schemes, language tags, and crawl
+              limits before a job is started.
+            </p>
+          </div>
+
+          <div
+            id="validation-summary"
+            class="validation-summary"
+            role="alert"
+            tabindex="-1"
+            hidden
+          >
+          </div>
+
+          <div class="field">
+            <label for="source-url">Source URL</label>
+            <input
+              id="source-url"
+              name="sourceUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="https://example.test/single-page/index.html"
+              value={defaults.sourceUrl}
+              required
+              aria-describedby="source-url-help source-url-error"
+            />
+            <p id="source-url-help" class="help">
+              HTTP and HTTPS URLs are accepted. Localhost, private, link-local,
+              and metadata targets are blocked.
+            </p>
+            <p
+              id="source-url-error"
+              class="field-error"
+              data-field-error="sourceUrl"
+            >
+            </p>
+          </div>
+
+          <fieldset class="segmented-fieldset">
+            <legend>Conversion mode</legend>
+            <div class="segmented-control">
+              <label>
+                <input
+                  type="radio"
+                  name="mode"
+                  value="single"
+                  checked={defaults.mode === "single"}
+                />
+                <span>
+                  <strong>Single page</strong>
+                  <small>One source page becomes one chapter.</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="mode"
+                  value="crawl"
+                  checked={defaults.mode === "crawl"}
+                />
+                <span>
+                  <strong>Crawl prefix</strong>
+                  <small>Scoped pages become ordered chapters.</small>
+                </span>
+              </label>
+            </div>
+            <p id="mode-note" class="help" aria-live="polite">
+              Single mode is active. Crawl-only settings are preserved while
+              hidden and do not affect this submission.
+            </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Book metadata</legend>
+            <div class="field-grid">
+              <div class="field">
+                <label for="book-title">Book title</label>
+                <input
+                  id="book-title"
+                  name="title"
+                  type="text"
+                  value={defaults.title}
+                  required
+                  maxlength="512"
+                  aria-describedby="book-title-error"
+                />
+                <p
+                  id="book-title-error"
+                  class="field-error"
+                  data-field-error="title"
+                >
+                </p>
+              </div>
+              <div class="field">
+                <label for="book-author">Author</label>
+                <input
+                  id="book-author"
+                  name="author"
+                  type="text"
+                  value={defaults.author}
+                  maxlength="512"
+                  aria-describedby="book-author-error"
+                />
+                <p
+                  id="book-author-error"
+                  class="field-error"
+                  data-field-error="author"
+                >
+                </p>
+              </div>
+              <div class="field">
+                <label for="book-language">Language</label>
+                <input
+                  id="book-language"
+                  name="language"
+                  type="text"
+                  value={defaults.language}
+                  required
+                  maxlength="32"
+                  spellcheck="false"
+                  aria-describedby="book-language-help book-language-error"
+                />
+                <p id="book-language-help" class="help">
+                  Use a language tag such as en, zh-CN, or en-US.
+                </p>
+                <p
+                  id="book-language-error"
+                  class="field-error"
+                  data-field-error="language"
+                >
+                </p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="book-description">Description</label>
+              <textarea
+                id="book-description"
+                name="description"
+                rows="4"
+                maxlength="512"
+                aria-describedby="book-description-error"
+                >{defaults.description}</textarea
+              >
+              <p
+                id="book-description-error"
+                class="field-error"
+                data-field-error="description"
+              >
+              </p>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Images, chapters, and output</legend>
+            <label class="checkbox-field">
+              <input
+                id="include-images"
+                name="includeImages"
+                type="checkbox"
+                checked={defaults.includeImages}
+              />
+              <span>
+                <strong>Include safe images</strong>
+                <small
+                  >Embed reachable safe images and skip unsafe or failed
+                  resources.</small
+                >
+              </span>
+            </label>
+
+            <div class="field-grid">
+              <div class="field">
+                <label for="chapter-strategy">Chapter organization</label>
+                <select id="chapter-strategy" name="chapterStrategy">
+                  <option
+                    value="source-order"
+                    selected={defaults.chapterStrategy === "source-order"}
+                  >
+                    Source order / one page per chapter
+                  </option>
+                  <option
+                    value="single-document"
+                    selected={defaults.chapterStrategy === "single-document"}
+                  >
+                    Keep readable content grouped
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="output-target">Output target</label>
+                <select id="output-target" name="outputTarget">
+                  <option
+                    value="epub"
+                    selected={defaults.outputTarget === "epub"}
+                  >
+                    EPUB download (.epub)
+                  </option>
+                </select>
+                <p class="help">
+                  Book Forge exports EPUB files only. WeRead use is manual EPUB
+                  import after download.
+                </p>
+              </div>
+            </div>
+            <p id="output-summary" class="help" aria-live="polite"></p>
+          </fieldset>
+
+          <section
+            id="crawl-options"
+            class="crawl-options"
+            aria-labelledby="crawl-heading"
+          >
+            <div class="section-heading compact">
+              <p class="eyebrow">Crawl mode</p>
+              <h3 id="crawl-heading">Prefix and limits</h3>
+              <p>
+                Crawl mode follows eligible same-origin links under the prefix
+                while enforcing bounded depth and page limits.
+              </p>
+            </div>
+            <div class="field">
+              <label for="crawl-prefix-url">Crawl prefix URL</label>
+              <input
+                id="crawl-prefix-url"
+                name="crawlPrefixUrl"
+                type="url"
+                inputmode="url"
+                placeholder="https://example.test/crawl-graph/"
+                value={defaults.crawlPrefixUrl}
+                aria-describedby="crawl-prefix-help crawl-prefix-url-error"
+              />
+              <p id="crawl-prefix-help" class="help">
+                Required in crawl mode. Must be HTTP or HTTPS and within the
+                source site.
+              </p>
+              <p
+                id="crawl-prefix-url-error"
+                class="field-error"
+                data-field-error="crawlPrefixUrl"
+              >
+              </p>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="max-depth">Maximum depth</label>
+                <input
+                  id="max-depth"
+                  name="maxDepth"
+                  type="number"
+                  inputmode="numeric"
+                  min="0"
+                  max={MAX_CRAWL_DEPTH}
+                  step="1"
+                  value={defaults.maxDepth}
+                  aria-describedby="max-depth-help max-depth-error"
+                />
+                <p id="max-depth-help" class="help">
+                  Whole number from 0 to {MAX_CRAWL_DEPTH}. Zero converts only
+                  the start page.
+                </p>
+                <p
+                  id="max-depth-error"
+                  class="field-error"
+                  data-field-error="maxDepth"
+                >
+                </p>
+              </div>
+              <div class="field">
+                <label for="max-pages">Maximum pages</label>
+                <input
+                  id="max-pages"
+                  name="maxPages"
+                  type="number"
+                  inputmode="numeric"
+                  min="1"
+                  max={MAX_CRAWL_PAGES}
+                  step="1"
+                  value={defaults.maxPages}
+                  aria-describedby="max-pages-help max-pages-error"
+                />
+                <p id="max-pages-help" class="help">
+                  Whole number from 1 to {MAX_CRAWL_PAGES}.
+                </p>
+                <p
+                  id="max-pages-error"
+                  class="field-error"
+                  data-field-error="maxPages"
+                >
+                </p>
+              </div>
+            </div>
+            <p class="help">
+              Runtime safety defaults: {
+                DEFAULT_MAX_TOTAL_BYTES.toLocaleString()
+              } bytes total and {DEFAULT_MAX_DURATION_MILLIS / 1000}s maximum
+              duration.
+            </p>
+          </section>
+
+          <div class="actions">
+            <button id="submit-button" type="submit">Forge EPUB</button>
+            <p id="submit-hint" class="help">
+              Submit starts one job and disables duplicate submissions while
+              progress is active.
+            </p>
+          </div>
+        </form>
+
+        <aside class="side-stack" aria-label="Conversion status and guidance">
+          <section
+            id="job-status"
+            class="card status-card"
+            role="status"
+            aria-live="polite"
+            aria-atomic="false"
+            tabindex="-1"
+            data-phase="idle"
+          >
+            <div class="section-heading compact">
+              <p class="eyebrow">Status</p>
+              <h2>Progress and download</h2>
+            </div>
+            <p id="status-text">Ready to configure a conversion.</p>
+            <div
+              id="progress-wrap"
+              class="progress-wrap"
+              role="progressbar"
+              aria-label="Conversion progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              hidden
+            >
+              <span id="progress-bar"></span>
+            </div>
+            <dl id="job-summary" class="job-summary" hidden>
+              <div>
+                <dt>Job</dt>
+                <dd id="summary-job">Not started</dd>
+              </div>
+              <div>
+                <dt>Mode</dt>
+                <dd id="summary-mode">Single page</dd>
+              </div>
+              <div>
+                <dt>Title</dt>
+                <dd id="summary-title">{defaults.title}</dd>
+              </div>
+              <div>
+                <dt>Options</dt>
+                <dd id="summary-options">Default EPUB output</dd>
+              </div>
+            </dl>
+            <div id="warning-list" class="message-list warning-list" hidden>
+            </div>
+            <div
+              id="error-list"
+              class="message-list error-list"
+              role="alert"
+              hidden
+            >
+            </div>
+            <a id="download-link" class="download-link" href="#" hidden>
+              Download EPUB
+            </a>
+          </section>
+
+          <section id="weread-guidance" class="card guidance-card" tabindex="0">
+            <div class="section-heading compact">
+              <p class="eyebrow">WeRead</p>
+              <h2>EPUB export guidance</h2>
+            </div>
+            <p>
+              Book Forge only creates an EPUB download. To use the result with
+              WeRead or another reader, download the `.epub` file after a job
+              completes and import it manually in the reader app.
+            </p>
+            <p>
+              This page never asks for usernames, passwords, cookies, tokens, QR
+              login, or API keys, and it does not send files directly to WeRead.
+            </p>
+          </section>
+        </aside>
+      </section>
     </main>
+
+    <script>
+      import {
+        ApiClientError,
+        createJob,
+        downloadUrlForJob,
+        getJob,
+        type ApiErrorBody,
+        type ApiWarning,
+        type JobResponse,
+      } from "../lib/api";
+      import {
+        applyMode,
+        buildCreateJobPayload,
+        canSubmitInPhase,
+        cloneDefaultFormValues,
+        outputOptionSummary,
+        validateForm,
+        type FormField,
+        type FormValues,
+        type UiPhase,
+        type ValidationResult,
+      } from "../lib/form-state";
+
+      const form = document.querySelector<HTMLFormElement>("#conversion-form");
+      const validationSummary = document.querySelector<HTMLElement>(
+        "#validation-summary",
+      );
+      const submitButton =
+        document.querySelector<HTMLButtonElement>("#submit-button");
+      const submitHint = document.querySelector<HTMLElement>("#submit-hint");
+      const crawlOptions =
+        document.querySelector<HTMLElement>("#crawl-options");
+      const modeNote = document.querySelector<HTMLElement>("#mode-note");
+      const outputSummary =
+        document.querySelector<HTMLElement>("#output-summary");
+      const statusCard = document.querySelector<HTMLElement>("#job-status");
+      const statusText = document.querySelector<HTMLElement>("#status-text");
+      const progressWrap =
+        document.querySelector<HTMLElement>("#progress-wrap");
+      const progressBar = document.querySelector<HTMLElement>("#progress-bar");
+      const jobSummary = document.querySelector<HTMLElement>("#job-summary");
+      const warningList = document.querySelector<HTMLElement>("#warning-list");
+      const errorList = document.querySelector<HTMLElement>("#error-list");
+      const downloadLink =
+        document.querySelector<HTMLAnchorElement>("#download-link");
+
+      const summaryJob = document.querySelector<HTMLElement>("#summary-job");
+      const summaryMode = document.querySelector<HTMLElement>("#summary-mode");
+      const summaryTitle =
+        document.querySelector<HTMLElement>("#summary-title");
+      const summaryOptions =
+        document.querySelector<HTMLElement>("#summary-options");
+
+      const fieldControls: Partial<Record<FormField, HTMLElement>> = {
+        sourceUrl: document.querySelector<HTMLInputElement>("#source-url")!,
+        title: document.querySelector<HTMLInputElement>("#book-title")!,
+        author: document.querySelector<HTMLInputElement>("#book-author")!,
+        language: document.querySelector<HTMLInputElement>("#book-language")!,
+        description:
+          document.querySelector<HTMLTextAreaElement>("#book-description")!,
+        includeImages:
+          document.querySelector<HTMLInputElement>("#include-images")!,
+        chapterStrategy:
+          document.querySelector<HTMLSelectElement>("#chapter-strategy")!,
+        outputTarget:
+          document.querySelector<HTMLSelectElement>("#output-target")!,
+        crawlPrefixUrl:
+          document.querySelector<HTMLInputElement>("#crawl-prefix-url")!,
+        maxDepth: document.querySelector<HTMLInputElement>("#max-depth")!,
+        maxPages: document.querySelector<HTMLInputElement>("#max-pages")!,
+      };
+
+      const fieldErrors = new Map<FormField, HTMLElement>(
+        Array.from(
+          document.querySelectorAll<HTMLElement>("[data-field-error]"),
+        ).map((element) => [element.dataset.fieldError as FormField, element]),
+      );
+
+      let values: FormValues = cloneDefaultFormValues();
+      let submittedValues: FormValues = { ...values };
+      let phase: UiPhase = "idle";
+      let currentJobId: string | null = null;
+      let pollTimer: number | undefined;
+
+      initialize();
+
+      function initialize() {
+        if (!form) {
+          return;
+        }
+
+        values = readFormValues();
+        renderMode();
+        renderOutputSummary();
+        renderSubmitState();
+        form.addEventListener("input", handleFormInput);
+        form.addEventListener("change", handleFormInput);
+        form.addEventListener("submit", handleSubmit);
+      }
+
+      function handleFormInput() {
+        const previousMode = values.mode;
+        values = readFormValues();
+        if (previousMode !== values.mode) {
+          values = applyMode(values, values.mode);
+        }
+        renderMode();
+        renderOutputSummary();
+        renderValidation(validateForm(values), false);
+      }
+
+      async function handleSubmit(event: SubmitEvent) {
+        event.preventDefault();
+        values = readFormValues();
+        const validation = validateForm(values);
+        renderValidation(validation, true);
+
+        if (!validation.canSubmit) {
+          focusInvalidField(validation);
+          return;
+        }
+
+        if (!canSubmitInPhase(phase)) {
+          announce(
+            "A conversion is already running. Wait for it to finish before submitting again.",
+          );
+          return;
+        }
+
+        clearPollTimer();
+        setPhase("submitting");
+        submittedValues = { ...values };
+        currentJobId = null;
+        renderMessages([], []);
+        renderDownload(null);
+        renderSubmittedSummary("Starting…");
+        announce("Submitting conversion job…");
+
+        try {
+          const created = await createJob(buildCreateJobPayload(values));
+          currentJobId = created.id;
+          renderJob(created);
+
+          if (isTerminal(created)) {
+            setPhase(created.status);
+            return;
+          }
+
+          setPhase("polling");
+          startPolling(created.id);
+        } catch (error) {
+          const apiError = normalizeError(error);
+          setPhase("failed");
+          renderMessages([], [apiError]);
+          renderDownload(null);
+          announce(`Job was not started: ${apiError.message}`);
+        }
+      }
+
+      function startPolling(jobId: string) {
+        const poll = async () => {
+          try {
+            const job = await getJob(jobId);
+            if (jobId !== currentJobId) {
+              return;
+            }
+            renderJob(job);
+            if (isTerminal(job)) {
+              clearPollTimer();
+              setPhase(job.status);
+            }
+          } catch (error) {
+            clearPollTimer();
+            const apiError = normalizeError(error);
+            setPhase("failed");
+            renderMessages([], [apiError]);
+            renderDownload(null);
+            announce(`Progress could not be refreshed: ${apiError.message}`);
+          }
+        };
+
+        pollTimer = window.setInterval(poll, 500);
+        void poll();
+      }
+
+      function renderJob(job: JobResponse) {
+        const percent = clampProgress(job.progress?.percent ?? 0);
+        const statusLabel = statusLabelFor(job.status);
+        const progressBits = [
+          `${percent}%`,
+          job.progress?.pagesFetched !== undefined
+            ? `${job.progress.pagesFetched} fetched`
+            : undefined,
+          job.progress?.pagesSkipped !== undefined
+            ? `${job.progress.pagesSkipped} skipped`
+            : undefined,
+        ].filter(Boolean);
+
+        renderProgress(percent, job.status !== "failed");
+        renderSubmittedSummary(job.id);
+        renderMessages(job.warnings ?? [], job.errors ?? []);
+        renderDownload(downloadUrlForJob(job));
+        announce(`${statusLabel}: ${progressBits.join(", ")}.`);
+      }
+
+      function renderMode() {
+        if (!crawlOptions || !modeNote) {
+          return;
+        }
+
+        const isCrawl = values.mode === "crawl";
+        crawlOptions.hidden = !isCrawl;
+        for (const field of [
+          "crawlPrefixUrl",
+          "maxDepth",
+          "maxPages",
+        ] as const) {
+          const control = fieldControls[field];
+          if (control instanceof HTMLInputElement) {
+            control.disabled = !isCrawl;
+            control.required = isCrawl;
+          }
+        }
+        modeNote.textContent = isCrawl
+          ? "Crawl mode is active. Prefix, depth, and page-limit settings will be submitted."
+          : "Single mode is active. Crawl-only settings are preserved while hidden and do not affect this submission.";
+      }
+
+      function renderOutputSummary() {
+        if (outputSummary) {
+          outputSummary.textContent = outputOptionSummary(values);
+        }
+      }
+
+      function renderValidation(
+        validation: ValidationResult,
+        showSummary: boolean,
+      ) {
+        for (const [field, errorElement] of fieldErrors.entries()) {
+          const messages = validation.errors[field] ?? [];
+          errorElement.textContent = messages.join(" ");
+          const control = fieldControls[field];
+          if (control) {
+            control.setAttribute(
+              "aria-invalid",
+              messages.length ? "true" : "false",
+            );
+          }
+        }
+
+        if (!validationSummary) {
+          return;
+        }
+
+        if (!showSummary || validation.canSubmit) {
+          validationSummary.hidden = true;
+          validationSummary.replaceChildren();
+          return;
+        }
+
+        const heading = document.createElement("strong");
+        heading.textContent = "Please fix the highlighted fields:";
+        const list = document.createElement("ul");
+        for (const field of Object.keys(validation.errors) as FormField[]) {
+          for (const message of validation.errors[field] ?? []) {
+            const item = document.createElement("li");
+            item.textContent = message;
+            list.append(item);
+          }
+        }
+        validationSummary.replaceChildren(heading, list);
+        validationSummary.hidden = false;
+      }
+
+      function renderProgress(percent: number, show: boolean) {
+        if (!progressWrap || !progressBar) {
+          return;
+        }
+
+        progressWrap.hidden = !show;
+        progressWrap.setAttribute("aria-valuenow", String(percent));
+        progressBar.style.width = `${percent}%`;
+      }
+
+      function renderSubmittedSummary(jobId: string) {
+        if (
+          !jobSummary ||
+          !summaryJob ||
+          !summaryMode ||
+          !summaryTitle ||
+          !summaryOptions
+        ) {
+          return;
+        }
+
+        summaryJob.textContent = jobId;
+        summaryMode.textContent =
+          submittedValues.mode === "crawl" ? "Crawl prefix" : "Single page";
+        summaryTitle.textContent = submittedValues.title;
+        summaryOptions.textContent = outputOptionSummary(submittedValues);
+        jobSummary.hidden = false;
+      }
+
+      function renderMessages(warnings: ApiWarning[], errors: ApiErrorBody[]) {
+        renderMessageList(warningList, warnings, "Warnings");
+        renderMessageList(errorList, errors, "Errors");
+      }
+
+      function renderMessageList(
+        container: HTMLElement | null,
+        messages: Array<{ code: string; message: string; affected?: string }>,
+        heading: string,
+      ) {
+        if (!container) {
+          return;
+        }
+
+        if (!messages.length) {
+          container.hidden = true;
+          container.replaceChildren();
+          return;
+        }
+
+        const title = document.createElement("strong");
+        title.textContent = heading;
+        const list = document.createElement("ul");
+        for (const message of messages) {
+          const item = document.createElement("li");
+          item.textContent = message.affected
+            ? `${message.message} (${message.affected})`
+            : message.message;
+          list.append(item);
+        }
+        container.replaceChildren(title, list);
+        container.hidden = false;
+      }
+
+      function renderDownload(url: string | null) {
+        if (!downloadLink) {
+          return;
+        }
+
+        if (!url) {
+          downloadLink.hidden = true;
+          downloadLink.removeAttribute("href");
+          downloadLink.setAttribute("aria-disabled", "true");
+          return;
+        }
+
+        downloadLink.href = url;
+        downloadLink.hidden = false;
+        downloadLink.setAttribute("aria-disabled", "false");
+      }
+
+      function renderSubmitState() {
+        if (!submitButton || !submitHint || !statusCard) {
+          return;
+        }
+
+        const active = !canSubmitInPhase(phase);
+        submitButton.disabled = active;
+        submitButton.setAttribute("aria-busy", String(active));
+        statusCard.dataset.phase = phase;
+        statusCard.setAttribute("aria-busy", String(active));
+
+        if (phase === "submitting") {
+          submitButton.textContent = "Starting job…";
+          submitHint.textContent =
+            "Submitting one job request. Duplicate submissions are disabled.";
+        } else if (phase === "polling") {
+          submitButton.textContent = "Conversion running…";
+          submitHint.textContent =
+            "Progress is active. The submit button will re-enable at completion.";
+        } else if (phase === "failed") {
+          submitButton.textContent = "Retry conversion";
+          submitHint.textContent =
+            "Fix inputs if needed, then retry without reloading.";
+        } else if (phase === "completed") {
+          submitButton.textContent = "Forge another EPUB";
+          submitHint.textContent =
+            "Completed. You can download the EPUB or start another conversion.";
+        } else {
+          submitButton.textContent = "Forge EPUB";
+          submitHint.textContent =
+            "Submit starts one job and disables duplicate submissions while progress is active.";
+        }
+      }
+
+      function setPhase(nextPhase: UiPhase | "queued" | "running") {
+        phase =
+          nextPhase === "queued" || nextPhase === "running"
+            ? "polling"
+            : nextPhase;
+        renderSubmitState();
+      }
+
+      function announce(message: string) {
+        if (statusText) {
+          statusText.textContent = message;
+        }
+      }
+
+      function focusInvalidField(validation: ValidationResult) {
+        const first = validation.firstInvalidField
+          ? fieldControls[validation.firstInvalidField]
+          : validationSummary;
+        if (first instanceof HTMLElement) {
+          first.focus();
+        }
+      }
+
+      function readFormValues(): FormValues {
+        if (!form) {
+          return cloneDefaultFormValues();
+        }
+
+        const data = new FormData(form);
+        const mode = data.get("mode") === "crawl" ? "crawl" : "single";
+        return {
+          sourceUrl: stringValue(data.get("sourceUrl")),
+          mode,
+          title: stringValue(data.get("title")),
+          author: stringValue(data.get("author")),
+          language: stringValue(data.get("language")),
+          description: stringValue(data.get("description")),
+          includeImages: data.has("includeImages"),
+          chapterStrategy:
+            data.get("chapterStrategy") === "single-document"
+              ? "single-document"
+              : "source-order",
+          outputTarget: "epub",
+          crawlPrefixUrl: stringValue(data.get("crawlPrefixUrl")),
+          maxDepth: stringValue(data.get("maxDepth")),
+          maxPages: stringValue(data.get("maxPages")),
+        };
+      }
+
+      function normalizeError(error: unknown): ApiErrorBody {
+        if (error instanceof ApiClientError) {
+          return {
+            code: error.code,
+            message: error.message,
+            fields: error.fields,
+          };
+        }
+        return {
+          code: "network_error",
+          message:
+            "The conversion request could not be completed. Check the server and retry.",
+          fields: [],
+        };
+      }
+
+      function clearPollTimer() {
+        if (pollTimer !== undefined) {
+          window.clearInterval(pollTimer);
+          pollTimer = undefined;
+        }
+      }
+
+      function isTerminal(job: JobResponse): boolean {
+        return job.status === "completed" || job.status === "failed";
+      }
+
+      function statusLabelFor(status: JobResponse["status"]): string {
+        return {
+          queued: "Queued",
+          running: "Running",
+          completed: "Completed",
+          failed: "Failed",
+        }[status];
+      }
+
+      function clampProgress(value: number): number {
+        if (!Number.isFinite(value)) {
+          return 0;
+        }
+        return Math.max(0, Math.min(100, Math.round(value)));
+      }
+
+      function stringValue(value: FormDataEntryValue | null): string {
+        return typeof value === "string" ? value : "";
+      }
+    </script>
   </body>
 </html>
