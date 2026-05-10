@@ -106,7 +106,9 @@ fn is_fixture_domain(domain: &str) -> bool {
 
 fn is_blocked_hostname(domain: &str) -> bool {
     domain == "localhost"
+        || domain == "localhost.localdomain"
         || domain.ends_with(".localhost")
+        || domain.ends_with(".localhost.localdomain")
         || matches!(
             domain,
             "metadata" | "metadata.google.internal" | "169.254.169.254"
