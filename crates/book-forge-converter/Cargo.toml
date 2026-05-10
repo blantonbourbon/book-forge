@@ -6,3 +6,15 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+ammonia = { workspace = true }
+ego-tree = { workspace = true }
+scraper = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+book-forge-epub-inspector = { path = "../../tools/epub-inspector" }
