@@ -1,0 +1,447 @@
+use std::{
+    fs,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use axum::{
+    body::{Body, to_bytes},
+    http::{Method, Request, StatusCode, header},
+};
+use book_forge_epub_inspector::inspect_epub;
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+fn fixture_app() -> axum::Router {
+    book_forge_server::test_support::fixture_app()
+}
+
+fn delayed_fixture_app(delay: Duration) -> axum::Router {
+    book_forge_server::test_support::delayed_fixture_app(delay)
+}
+
+fn single_payload(source_url: &str, title: &str) -> Value {
+    json!({
+        "sourceUrl": source_url,
+        "mode": "single",
+        "metadata": {
+            "title": title,
+            "author": "API Test Author",
+            "language": "en",
+            "description": "API single conversion fixture"
+        },
+        "options": {
+            "includeImages": false
+        }
+    })
+}
+
+fn crawl_payload(max_depth: usize, max_pages: usize) -> Value {
+    json!({
+        "sourceUrl": "https://example.test/crawl-graph/index.html",
+        "mode": "crawl",
+        "metadata": {
+            "title": "API Crawl Fixture",
+            "author": "API Test Author",
+            "language": "en",
+            "description": "API crawl conversion fixture"
+        },
+        "options": {
+            "includeImages": false
+        },
+        "crawl": {
+            "prefixUrl": "https://example.test/crawl-graph/",
+            "maxDepth": max_depth,
+            "maxPages": max_pages,
+            "maxTotalBytes": 1048576,
+            "maxDurationMillis": 30000
+        }
+    })
+}
+
+async fn json_request(
+    app: axum::Router,
+    method: Method,
+    uri: &str,
+    payload: Option<Value>,
+) -> (StatusCode, axum::http::HeaderMap, Value) {
+    let mut request = Request::builder().method(method).uri(uri);
+    let body = if let Some(payload) = payload {
+        request = request.header(header::CONTENT_TYPE, "application/json");
+        Body::from(serde_json::to_vec(&payload).expect("payload should serialize"))
+    } else {
+        Body::empty()
+    };
+
+    let response = app
+        .oneshot(request.body(body).expect("request should build"))
+        .await
+        .expect("router should respond");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("body should collect");
+    let json = serde_json::from_slice(&body).unwrap_or_else(|error| {
+        panic!(
+            "expected JSON body for {uri}, got error {error} and body {:?}",
+            String::from_utf8_lossy(&body)
+        )
+    });
+    (status, headers, json)
+}
+
+async fn binary_request(
+    app: axum::Router,
+    method: Method,
+    uri: &str,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("router should respond");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .expect("body should collect")
+        .to_vec();
+    (status, headers, body)
+}
+
+async fn create_job(app: axum::Router, payload: Value) -> Value {
+    let (status, _, body) = json_request(app, Method::POST, "/api/jobs", Some(payload)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body:#?}");
+    assert!(body["id"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(matches!(
+        body["status"].as_str(),
+        Some("queued" | "running" | "completed")
+    ));
+    body
+}
+
+async fn wait_for_terminal(app: axum::Router, id: &str) -> Value {
+    for _ in 0..100 {
+        let (status, _, body) =
+            json_request(app.clone(), Method::GET, &format!("/api/jobs/{id}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body:#?}");
+        match body["status"].as_str() {
+            Some("completed" | "failed") => return body,
+            Some("queued" | "running") => tokio::time::sleep(Duration::from_millis(20)).await,
+            other => panic!("unexpected lifecycle status {other:?}: {body:#?}"),
+        }
+    }
+
+    panic!("job {id} did not reach a terminal state");
+}
+
+fn assert_safe_error(body: &Value) {
+    let error = &body["error"];
+    assert!(
+        error["code"].as_str().is_some_and(|code| !code.is_empty()),
+        "error code missing: {body:#?}"
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty()),
+        "error message missing: {body:#?}"
+    );
+    let serialized = body.to_string().to_lowercase();
+    for forbidden in ["/home/", "target/debug", "backtrace", "panic", "rustc"] {
+        assert!(
+            !serialized.contains(forbidden),
+            "unsafe error body leaked {forbidden}: {body:#?}"
+        );
+    }
+}
+
+fn inspect_epub_bytes(bytes: &[u8]) -> book_forge_epub_inspector::InspectionReport {
+    let path = std::env::temp_dir().join(format!(
+        "book-forge-api-{}.epub",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos()
+    ));
+    fs::write(&path, bytes).expect("temporary EPUB should be written");
+    let report = inspect_epub(&path);
+    fs::remove_file(path).expect("temporary EPUB should be removed");
+    report
+}
+
+#[tokio::test]
+async fn health_and_unsupported_methods_return_safe_json() {
+    let app = fixture_app();
+
+    let (status, headers, body) = json_request(app.clone(), Method::GET, "/api/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers[header::CONTENT_TYPE]
+            .to_str()
+            .expect("content type should be text")
+            .starts_with("application/json")
+    );
+    assert_eq!(body["status"], "healthy");
+
+    let (status, _, body) = json_request(app.clone(), Method::POST, "/api/health", None).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_safe_error(&body);
+    assert_eq!(body["error"]["code"], "method_not_allowed");
+
+    let (status, _, body) = json_request(app.clone(), Method::PUT, "/api/jobs", None).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_safe_error(&body);
+
+    let (status, _, body) =
+        json_request(app, Method::DELETE, "/api/jobs/not-a-uuid/download", None).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_safe_error(&body);
+}
+
+#[tokio::test]
+async fn creates_single_job_reports_status_and_downloads_safe_epub() {
+    let app = fixture_app();
+    let created = create_job(
+        app.clone(),
+        single_payload(
+            "https://example.test/single-page/index.html",
+            "Unsafe / <b>API</b>\r\n Title ..",
+        ),
+    )
+    .await;
+    assert_eq!(created["mode"], "single");
+
+    let id = created["id"].as_str().expect("id should be present");
+    let terminal = wait_for_terminal(app.clone(), id).await;
+    assert_eq!(terminal["id"], id);
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["progress"]["percent"], 100);
+    assert_eq!(
+        terminal["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .len(),
+        0
+    );
+    assert_eq!(
+        terminal["errors"].as_array().expect("errors array").len(),
+        0
+    );
+    assert_eq!(terminal["downloadUrl"], format!("/api/jobs/{id}/download"));
+
+    let (status, headers, bytes) =
+        binary_request(app, Method::GET, &format!("/api/jobs/{id}/download")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/epub+zip");
+    let disposition = headers[header::CONTENT_DISPOSITION]
+        .to_str()
+        .expect("content disposition should be ascii");
+    assert!(disposition.starts_with("attachment; filename=\""));
+    assert!(disposition.ends_with(".epub\""));
+    for forbidden in ['/', '\\', '\r', '\n'] {
+        assert!(!disposition.contains(forbidden));
+    }
+    assert!(bytes.starts_with(b"PK"));
+    assert!(bytes.len() > 512);
+    let report = inspect_epub_bytes(&bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+}
+
+#[tokio::test]
+async fn crawl_jobs_surface_progress_and_structured_limit_warnings() {
+    let app = fixture_app();
+    let created = create_job(app.clone(), crawl_payload(0, 10)).await;
+    let id = created["id"].as_str().expect("id should be present");
+
+    let terminal = wait_for_terminal(app, id).await;
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["mode"], "crawl");
+    assert_eq!(terminal["progress"]["percent"], 100);
+    assert_eq!(terminal["progress"]["pagesFetched"], 1);
+    assert_eq!(terminal["progress"]["maxDepth"], 0);
+    assert_eq!(terminal["progress"]["maxPages"], 10);
+    assert!(
+        terminal["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .any(|warning| warning["code"] == "crawl_depth_limit"
+                && warning["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("depth")))
+    );
+}
+
+#[tokio::test]
+async fn invalid_requests_unknown_jobs_and_failed_jobs_are_safe_json() {
+    let app = fixture_app();
+
+    for payload in [
+        json!({"mode": "single"}),
+        json!({
+            "sourceUrl": "not a url",
+            "mode": "single",
+            "metadata": {"title": "Bad URL", "author": "A", "language": "en", "description": ""}
+        }),
+        json!({
+            "sourceUrl": "https://example.test/single-page/index.html",
+            "mode": "invalid",
+            "metadata": {"title": "Bad Mode", "author": "A", "language": "en", "description": ""}
+        }),
+        json!({
+            "sourceUrl": "https://example.test/crawl-graph/index.html",
+            "mode": "crawl",
+            "metadata": {"title": "Bad Crawl", "author": "A", "language": "en", "description": ""},
+            "crawl": {"prefixUrl": "https://example.test/crawl-graph/", "maxDepth": 2, "maxPages": 0}
+        }),
+    ] {
+        let (status, _, body) =
+            json_request(app.clone(), Method::POST, "/api/jobs", Some(payload)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+        assert_safe_error(&body);
+        assert!(body.get("id").is_none());
+    }
+
+    let (status, _, body) =
+        json_request(app.clone(), Method::GET, "/api/jobs/not-a-uuid", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_safe_error(&body);
+    assert_eq!(body["error"]["code"], "invalid_job_id");
+
+    let missing = "00000000-0000-0000-0000-000000000000";
+    let (status, _, body) = json_request(
+        app.clone(),
+        Method::GET,
+        &format!("/api/jobs/{missing}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_safe_error(&body);
+    assert_eq!(body["error"]["code"], "job_not_found");
+
+    let failed = create_job(
+        app.clone(),
+        single_payload(
+            "https://example.test/does-not-exist.html",
+            "Missing Fixture",
+        ),
+    )
+    .await;
+    let failed = wait_for_terminal(app.clone(), failed["id"].as_str().expect("id")).await;
+    assert_eq!(failed["status"], "failed");
+    assert_safe_error(&json!({"error": failed["errors"][0]}));
+
+    let oversized = create_job(
+        app.clone(),
+        single_payload(
+            "https://example.test/oversized-slow/oversized.html",
+            "Oversized Fixture",
+        ),
+    )
+    .await;
+    let oversized = wait_for_terminal(app.clone(), oversized["id"].as_str().expect("id")).await;
+    assert_eq!(oversized["status"], "failed");
+    assert_eq!(oversized["errors"][0]["code"], "response_too_large");
+    assert!(
+        oversized["errors"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("byte limit"))
+    );
+    assert_safe_error(&json!({"error": oversized["errors"][0]}));
+
+    let (status, _, body) = json_request(
+        app,
+        Method::GET,
+        &format!(
+            "/api/jobs/{}/download",
+            failed["id"].as_str().expect("id should be present")
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_safe_error(&body);
+    assert_eq!(body["error"]["code"], "job_failed");
+}
+
+#[tokio::test]
+async fn downloads_are_unavailable_before_completion() {
+    let app = delayed_fixture_app(Duration::from_millis(250));
+    let created = create_job(
+        app.clone(),
+        single_payload(
+            "https://example.test/single-page/index.html",
+            "Delayed Download Gate",
+        ),
+    )
+    .await;
+    let id = created["id"].as_str().expect("id should be present");
+
+    let (status, _, body) = json_request(
+        app.clone(),
+        Method::GET,
+        &format!("/api/jobs/{id}/download"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_safe_error(&body);
+    assert_eq!(body["error"]["code"], "job_not_completed");
+
+    let terminal = wait_for_terminal(app, id).await;
+    assert_eq!(terminal["status"], "completed");
+}
+
+#[tokio::test]
+async fn concurrent_jobs_keep_unique_ids_and_isolated_artifacts() {
+    let app = fixture_app();
+    let (first, second) = tokio::join!(
+        create_job(
+            app.clone(),
+            single_payload(
+                "https://example.test/single-page/index.html",
+                "First API Book"
+            )
+        ),
+        create_job(app.clone(), crawl_payload(2, 10))
+    );
+    let first_id = first["id"].as_str().expect("first id");
+    let second_id = second["id"].as_str().expect("second id");
+    assert_ne!(first_id, second_id);
+
+    let (first_terminal, second_terminal) = tokio::join!(
+        wait_for_terminal(app.clone(), first_id),
+        wait_for_terminal(app.clone(), second_id)
+    );
+    assert_eq!(first_terminal["status"], "completed");
+    assert_eq!(second_terminal["status"], "completed");
+    assert_eq!(first_terminal["mode"], "single");
+    assert_eq!(second_terminal["mode"], "crawl");
+    assert_ne!(
+        first_terminal["summary"]["metadata"]["title"],
+        second_terminal["summary"]["metadata"]["title"]
+    );
+
+    let (first_status, first_headers, first_bytes) = binary_request(
+        app.clone(),
+        Method::GET,
+        &format!("/api/jobs/{first_id}/download"),
+    )
+    .await;
+    let (second_status, second_headers, second_bytes) =
+        binary_request(app, Method::GET, &format!("/api/jobs/{second_id}/download")).await;
+    assert_eq!(first_status, StatusCode::OK);
+    assert_eq!(second_status, StatusCode::OK);
+    assert_ne!(
+        first_headers[header::CONTENT_DISPOSITION],
+        second_headers[header::CONTENT_DISPOSITION]
+    );
+    assert_ne!(first_bytes, second_bytes);
+}
