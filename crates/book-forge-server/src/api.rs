@@ -29,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs", any(jobs_route))
         .route("/api/jobs/{id}", any(job_status_route))
         .route("/api/jobs/{id}/download", any(download_route))
+        .route("/api", any(api_not_found))
+        .route("/api/", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .fallback(static_files::serve_static)
         .with_state(state)

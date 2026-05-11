@@ -327,16 +327,19 @@ async fn static_serving_returns_frontend_assets_and_preserves_api_errors() {
     );
     assert!(String::from_utf8_lossy(&body).contains("Book Forge Static Test"));
 
-    let (status, headers, body) = json_request(app, Method::GET, "/api/does-not-exist", None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(
-        headers[header::CONTENT_TYPE]
-            .to_str()
-            .expect("content type should be text")
-            .starts_with("application/json")
-    );
-    assert_safe_error(&body);
-    assert_eq!(body["error"]["code"], "api_route_not_found");
+    for api_path in ["/api", "/api/", "/api/does-not-exist"] {
+        let (status, headers, body) = json_request(app.clone(), Method::GET, api_path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{api_path}: {body:#?}");
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .expect("content type should be text")
+                .starts_with("application/json"),
+            "{api_path} did not return a JSON content type"
+        );
+        assert_safe_error(&body);
+        assert_eq!(body["error"]["code"], "api_route_not_found");
+    }
 
     fs::remove_dir_all(static_dir).expect("static fixture should be removed");
 }

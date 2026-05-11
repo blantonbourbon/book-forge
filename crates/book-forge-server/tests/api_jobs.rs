@@ -1,6 +1,8 @@
 use std::{
     fs,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    io::ErrorKind,
+    net::SocketAddr,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -17,6 +19,10 @@ fn fixture_app() -> axum::Router {
 
 fn delayed_fixture_app(delay: Duration) -> axum::Router {
     book_forge_server::test_support::delayed_fixture_app(delay)
+}
+
+fn resolved_host_app(domain: &str, addr: SocketAddr) -> axum::Router {
+    book_forge_server::test_support::resolved_host_fixture_app(domain, &[addr])
 }
 
 fn single_payload(source_url: &str, title: &str) -> Value {
@@ -166,6 +172,47 @@ async fn wait_for_terminal(app: axum::Router, id: &str) -> Value {
     panic!("job {id} did not reach a terminal state");
 }
 
+async fn start_no_content_length_html_server(body_size: usize) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("test TCP listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose address");
+    tokio::spawn(async move {
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        write_all(
+            &stream,
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nTransfer-Encoding: chunked\r\n\r\n",
+        )
+        .await;
+        let mut body = b"<!doctype html><html><body><h1>Streaming Fixture</h1><p>".to_vec();
+        body.extend(std::iter::repeat_n(b'x', body_size));
+        body.extend_from_slice(b"</p></body></html>");
+        write_all(&stream, format!("{:x}\r\n", body.len()).as_bytes()).await;
+        write_all(&stream, &body).await;
+        write_all(&stream, b"\r\n").await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    });
+    addr
+}
+
+async fn write_all(stream: &tokio::net::TcpStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        if stream.writable().await.is_err() {
+            return;
+        }
+        match stream.try_write(bytes) {
+            Ok(0) => return,
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(_) => return,
+        }
+    }
+}
+
 fn assert_safe_error(body: &Value) {
     let error = &body["error"];
     assert!(
@@ -311,6 +358,144 @@ async fn crawl_jobs_surface_progress_and_structured_limit_warnings() {
                 && warning["message"]
                     .as_str()
                     .is_some_and(|message| message.contains("depth")))
+    );
+}
+
+#[tokio::test]
+async fn runtime_limits_cover_slow_fixture_crawl_time_and_streaming_byte_limit() {
+    let slow_app = delayed_fixture_app(Duration::from_millis(150));
+    let mut slow_payload = crawl_payload(0, 1);
+    slow_payload["sourceUrl"] = json!("https://example.test/single-page/index.html");
+    slow_payload["crawl"]["prefixUrl"] = json!("https://example.test/single-page/");
+    slow_payload["crawl"]["maxDurationMillis"] = json!(50);
+    let started = Instant::now();
+    let slow_created = create_job(slow_app.clone(), slow_payload).await;
+    let slow_terminal = wait_for_terminal(
+        slow_app,
+        slow_created["id"].as_str().expect("id should be present"),
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "slow fixture timeout should terminate promptly"
+    );
+    assert_eq!(slow_terminal["status"], "failed");
+    assert_eq!(slow_terminal["errors"][0]["code"], "fetch_timeout");
+    assert_safe_error(&json!({"error": slow_terminal["errors"][0]}));
+
+    let duration_app = delayed_fixture_app(Duration::from_millis(70));
+    let mut duration_payload = crawl_payload(2, 10);
+    duration_payload["crawl"]["maxDurationMillis"] = json!(120);
+    let duration_created = create_job(duration_app.clone(), duration_payload).await;
+    let duration_terminal = wait_for_terminal(
+        duration_app,
+        duration_created["id"]
+            .as_str()
+            .expect("id should be present"),
+    )
+    .await;
+    assert_eq!(duration_terminal["status"], "completed");
+    assert!(
+        duration_terminal["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .any(|warning| warning["code"] == "crawl_time_limit"
+                && warning["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("time limit"))),
+        "crawl duration expiry was not surfaced: {duration_terminal:#?}"
+    );
+
+    let stream_domain = "example.test";
+    let stream_addr = start_no_content_length_html_server(512).await;
+    let stream_app = resolved_host_app(stream_domain, stream_addr);
+    let stream_url = format!("http://{stream_domain}:{}/stream.html", stream_addr.port());
+    let stream_payload = json!({
+        "sourceUrl": stream_url,
+        "mode": "crawl",
+        "metadata": {
+            "title": "Streaming Byte Limit",
+            "author": "API Test Author",
+            "language": "en",
+            "description": "No content length byte limit fixture"
+        },
+        "options": {
+            "includeImages": false,
+            "outputTarget": "epub"
+        },
+        "crawl": {
+            "prefixUrl": format!("http://{stream_domain}:{}/", stream_addr.port()),
+            "maxDepth": 0,
+            "maxPages": 1,
+            "maxTotalBytes": 128,
+            "maxDurationMillis": 500
+        }
+    });
+    let stream_created = create_job(stream_app.clone(), stream_payload).await;
+    let stream_terminal = wait_for_terminal(
+        stream_app,
+        stream_created["id"].as_str().expect("id should be present"),
+    )
+    .await;
+    assert_eq!(stream_terminal["status"], "failed");
+    assert_eq!(stream_terminal["errors"][0]["code"], "response_too_large");
+    assert!(
+        stream_terminal["errors"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("byte limit"))
+    );
+    assert_safe_error(&json!({"error": stream_terminal["errors"][0]}));
+}
+
+#[tokio::test]
+async fn single_jobs_include_images_fetches_resources_for_epub_output() {
+    let app = fixture_app();
+    let mut payload = single_payload(
+        "https://example.test/images-crawl/index.html",
+        "API Single Images",
+    );
+    payload["options"]["includeImages"] = json!(true);
+
+    let created = create_job(app.clone(), payload).await;
+    let id = created["id"].as_str().expect("id should be present");
+    let terminal = wait_for_terminal(app.clone(), id).await;
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["mode"], "single");
+    assert_eq!(terminal["summary"]["options"]["includeImages"], true);
+    assert!(
+        terminal["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .any(|warning| warning["code"] == "image_fetch_failed"
+                && warning["affected"] == "https://example.test/images/missing.png"),
+        "single-page missing-image warning was not surfaced: {terminal:#?}"
+    );
+
+    let (status, headers, bytes) =
+        binary_request(app, Method::GET, &format!("/api/jobs/{id}/download")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/epub+zip");
+    let report = inspect_epub_bytes(&bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+    assert!(
+        report
+            .xhtml
+            .iter()
+            .flat_map(|xhtml| xhtml.srcs.iter())
+            .all(|src| !src.starts_with("http") && !src.contains("missing.png")),
+        "single chapter image references should be packaged and skip failed images: {:?}",
+        report.xhtml
+    );
+    let package = report.package.expect("package should inspect");
+    assert_eq!(package.content_chapters.len(), 1);
+    assert!(
+        package
+            .manifest
+            .iter()
+            .any(|item| item.media_type.starts_with("image/")),
+        "single include-images output did not package image resources"
     );
 }
 

@@ -528,7 +528,7 @@ async fn execute_single(
     let source_url = Url::parse(&summary.source_url).expect("validated source URL should parse");
     let fetched = fetch_html(
         &fetcher,
-        source_url,
+        source_url.clone(),
         DEFAULT_FETCH_TIMEOUT_MILLIS,
         DEFAULT_MAX_TOTAL_BYTES,
     )
@@ -540,20 +540,40 @@ async fn execute_single(
     progress.bytes_fetched = fetched.bytes.len();
     progress.percent = 70;
 
+    let final_url = fetched.final_url.clone();
+    let base_url = Url::parse(&final_url).unwrap_or_else(|_| source_url.clone());
     let html = fetched
         .clone()
         .text()
         .map_err(|error| (fetch_error_body(error), progress.clone()))?;
-    let result = convert_single_page(SinglePageInput {
-        source_url: fetched.final_url,
+    let resources = if summary.options.include_images {
+        let mut seen_resources = HashSet::new();
+        let (resources, resource_bytes) = fetch_image_resources(
+            &fetcher,
+            &html,
+            &base_url,
+            DEFAULT_FETCH_TIMEOUT_MILLIS,
+            DEFAULT_MAX_TOTAL_BYTES,
+            &mut seen_resources,
+        )
+        .await;
+        progress.bytes_fetched = progress.bytes_fetched.saturating_add(resource_bytes);
+        resources
+    } else {
+        Vec::new()
+    };
+
+    let mut result = convert_single_page(SinglePageInput {
+        source_url: final_url,
         html,
-        resources: Vec::new(),
+        resources,
         metadata: summary.metadata,
         options: ConversionOptions {
             include_images: summary.options.include_images,
         },
     })
     .map_err(|error| (conversion_error_body(error), progress.clone()))?;
+    result.warnings = sanitize_warnings(result.warnings);
 
     Ok((result, progress))
 }
@@ -578,6 +598,7 @@ async fn execute_crawl(
     let mut queue = VecDeque::from([(source_url.clone(), 0usize)]);
     let mut seen_pages = HashSet::from([normalize_page_key(&source_url)]);
     let mut seen_resources = HashSet::new();
+    let mut crawl_time_limit_reached = false;
 
     progress.pages_discovered = 1;
     progress.percent = 10;
@@ -585,6 +606,7 @@ async fn execute_crawl(
 
     while let Some((page_url, depth)) = queue.pop_front() {
         if started.elapsed() > Duration::from_millis(crawl.max_duration_millis) {
+            crawl_time_limit_reached = true;
             break;
         }
 
@@ -638,36 +660,17 @@ async fn execute_crawl(
         });
 
         if summary.options.include_images {
-            for image_url in extract_image_urls(&html, &page_url) {
-                if !matches!(image_url.scheme(), "http" | "https") {
-                    continue;
-                }
-                let resource_key = normalize_resource_key(&image_url);
-                if !seen_resources.insert(resource_key) {
-                    continue;
-                }
-                match fetcher
-                    .fetch(
-                        image_url.clone(),
-                        Duration::from_millis(crawl.max_duration_millis),
-                        crawl.max_total_bytes,
-                    )
-                    .await
-                {
-                    Ok(resource) => resources.push(CrawlResource {
-                        url: image_url.to_string(),
-                        media_type: resource.media_type,
-                        bytes: resource.bytes,
-                        failure: None,
-                    }),
-                    Err(error) => resources.push(CrawlResource {
-                        url: image_url.to_string(),
-                        media_type: "application/octet-stream".to_string(),
-                        bytes: Vec::new(),
-                        failure: Some(error.message),
-                    }),
-                }
-            }
+            let (page_resources, resource_bytes) = fetch_image_resources(
+                &fetcher,
+                &html,
+                &page_url,
+                crawl.max_duration_millis,
+                crawl.max_total_bytes,
+                &mut seen_resources,
+            )
+            .await;
+            progress.bytes_fetched = progress.bytes_fetched.saturating_add(resource_bytes);
+            resources.extend(page_resources);
         }
 
         for link_url in extract_link_urls(&html, &page_url) {
@@ -701,16 +704,79 @@ async fn execute_crawl(
     })
     .map_err(|error| (conversion_error_body(error), progress.clone()))?;
 
-    result.warnings = result
-        .warnings
+    if crawl_time_limit_reached
+        && !result
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "crawl_time_limit")
+    {
+        result.warnings.push(ConversionWarning {
+            code: "crawl_time_limit".to_string(),
+            message: "Crawl stopped because the configured time limit was reached.".to_string(),
+            affected: None,
+        });
+    }
+
+    result.warnings = sanitize_warnings(result.warnings);
+    Ok((result, progress))
+}
+
+async fn fetch_image_resources(
+    fetcher: &impl Fetcher,
+    html: &str,
+    page_url: &Url,
+    timeout_millis: u64,
+    max_bytes: usize,
+    seen_resources: &mut HashSet<String>,
+) -> (Vec<CrawlResource>, usize) {
+    let mut resources = Vec::new();
+    let mut bytes_fetched = 0usize;
+    for image_url in extract_image_urls(html, page_url) {
+        if !matches!(image_url.scheme(), "http" | "https") {
+            continue;
+        }
+        let resource_key = normalize_resource_key(&image_url);
+        if !seen_resources.insert(resource_key) {
+            continue;
+        }
+        match fetcher
+            .fetch(
+                image_url.clone(),
+                Duration::from_millis(timeout_millis),
+                max_bytes,
+            )
+            .await
+        {
+            Ok(resource) => {
+                bytes_fetched = bytes_fetched.saturating_add(resource.bytes.len());
+                resources.push(CrawlResource {
+                    url: image_url.to_string(),
+                    media_type: resource.media_type,
+                    bytes: resource.bytes,
+                    failure: None,
+                });
+            }
+            Err(error) => resources.push(CrawlResource {
+                url: image_url.to_string(),
+                media_type: "application/octet-stream".to_string(),
+                bytes: Vec::new(),
+                failure: Some(error.message),
+            }),
+        }
+    }
+
+    (resources, bytes_fetched)
+}
+
+fn sanitize_warnings(warnings: Vec<ConversionWarning>) -> Vec<ConversionWarning> {
+    warnings
         .into_iter()
         .map(|warning| ConversionWarning {
             code: sanitize_message(warning.code),
             message: sanitize_message(warning.message),
             affected: warning.affected.map(sanitize_message),
         })
-        .collect();
-    Ok((result, progress))
+        .collect()
 }
 
 async fn fetch_html(

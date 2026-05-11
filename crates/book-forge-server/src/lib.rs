@@ -35,8 +35,7 @@ pub fn app_with_fetcher_and_static_dir(fetcher: SharedFetcher, static_dir: PathB
 }
 
 pub mod test_support {
-    use std::path::PathBuf;
-    use std::time::Duration;
+    use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
     use axum::Router;
 
@@ -48,6 +47,12 @@ pub mod test_support {
 
     pub fn delayed_fixture_app(delay: Duration) -> Router {
         app_with_fetcher(SharedFetcher::fixture_or_http_with_delay(delay))
+    }
+
+    pub fn resolved_host_fixture_app(domain: &str, addrs: &[SocketAddr]) -> Router {
+        app_with_fetcher(SharedFetcher::fixture_or_http_with_resolved_host(
+            domain, addrs,
+        ))
     }
 
     pub fn static_fixture_app(static_dir: PathBuf) -> Router {

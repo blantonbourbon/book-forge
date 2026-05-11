@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 
@@ -26,22 +26,35 @@ impl SecurityError {
 }
 
 pub async fn validate_network_url(url: &Url) -> Result<(), SecurityError> {
+    resolve_vetted_addrs(url).await.map(|_| ())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VettedResolvedAddrs {
+    pub domain: String,
+    pub addresses: Vec<SocketAddr>,
+}
+
+pub async fn resolve_vetted_addrs(url: &Url) -> Result<Option<VettedResolvedAddrs>, SecurityError> {
     validate_url_without_dns(url)?;
 
     let Some(domain) = public_domain_for_dns(url) else {
-        return Ok(());
+        return Ok(None);
     };
     let port = url.port_or_known_default().unwrap_or(80);
     let lookup = tokio::time::timeout(DNS_LOOKUP_TIMEOUT, lookup_host((domain.as_str(), port)));
-    let Ok(Ok(addresses)) = lookup.await else {
-        return Ok(());
+    let addresses = match lookup.await {
+        Ok(Ok(addresses)) => addresses.collect::<Vec<_>>(),
+        Ok(Err(_)) | Err(_) => {
+            return Err(dns_lookup_error());
+        }
     };
 
-    for address in addresses {
-        ensure_public_ip(address.ip())?;
-    }
+    validate_resolved_addresses(domain, addresses).map(Some)
+}
 
-    Ok(())
+fn dns_lookup_error() -> SecurityError {
+    SecurityError::new("DNS lookup did not complete safely for the requested host.")
 }
 
 fn validate_url_without_dns(url: &Url) -> Result<(), SecurityError> {
@@ -122,6 +135,23 @@ fn ensure_public_ip(address: IpAddr) -> Result<(), SecurityError> {
     }
 }
 
+fn validate_resolved_addresses(
+    domain: String,
+    addresses: Vec<SocketAddr>,
+) -> Result<VettedResolvedAddrs, SecurityError> {
+    if addresses.is_empty() {
+        return Err(SecurityError::new(
+            "DNS lookup did not return a usable public address.",
+        ));
+    }
+
+    for address in &addresses {
+        ensure_public_ip(address.ip())?;
+    }
+
+    Ok(VettedResolvedAddrs { domain, addresses })
+}
+
 fn ensure_public_ipv4(address: Ipv4Addr) -> Result<(), SecurityError> {
     let octets = address.octets();
     let blocked = address.is_loopback()
@@ -186,4 +216,41 @@ fn ipv4_mapped(address: Ipv6Addr) -> Option<Ipv4Addr> {
         ));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use super::{dns_lookup_error, validate_resolved_addresses};
+
+    #[test]
+    fn resolved_address_policy_fails_closed_for_dns_errors_and_private_results() {
+        let lookup_error = dns_lookup_error();
+        assert_eq!(lookup_error.code, "unsafe_url");
+        assert!(lookup_error.message.contains("DNS lookup"));
+
+        assert!(
+            validate_resolved_addresses("empty.example".to_string(), Vec::new()).is_err(),
+            "empty DNS results must fail closed"
+        );
+        assert!(
+            validate_resolved_addresses(
+                "private.example".to_string(),
+                vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80)],
+            )
+            .is_err(),
+            "private DNS results must fail closed"
+        );
+    }
+
+    #[test]
+    fn resolved_address_policy_preserves_public_addresses_for_request_pinning() {
+        let public = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)), 443);
+        let vetted = validate_resolved_addresses("example.org".to_string(), vec![public])
+            .expect("public DNS results should be retained for outbound request pinning");
+
+        assert_eq!(vetted.domain, "example.org");
+        assert_eq!(vetted.addresses, vec![public]);
+    }
 }
