@@ -24,10 +24,15 @@ struct PageSource {
     failure: Option<String>,
 }
 
-struct ResourceSource {
+pub(crate) struct ResourceSource {
     media_type: String,
     bytes: Vec<u8>,
     failure: Option<String>,
+}
+
+pub(crate) struct ImageSource<'a> {
+    pub(crate) url: &'a Url,
+    pub(crate) images: &'a [String],
 }
 
 struct DiscoveredPage {
@@ -70,8 +75,15 @@ pub(crate) fn convert_crawl(input: CrawlInput) -> Result<ConversionResult, Conve
     }
 
     let (resources, image_paths) = if options.include_images {
+        let image_sources = discovered_pages
+            .iter()
+            .map(|page| ImageSource {
+                url: &page.url,
+                images: &page.analysis.images,
+            })
+            .collect::<Vec<_>>();
         collect_image_resources(
-            &discovered_pages,
+            &image_sources,
             &resource_lookup,
             &mut warnings,
             &mut warning_keys,
@@ -298,8 +310,8 @@ fn discover_pages(
     discovered
 }
 
-fn collect_image_resources(
-    pages: &[DiscoveredPage],
+pub(crate) fn collect_image_resources(
+    pages: &[ImageSource<'_>],
     resource_lookup: &HashMap<String, ResourceSource>,
     warnings: &mut Vec<ConversionWarning>,
     warning_keys: &mut HashSet<(String, String)>,
@@ -309,8 +321,8 @@ fn collect_image_resources(
     let mut used_paths = HashSet::new();
 
     for page in pages {
-        for raw_src in &page.analysis.images {
-            let image_url = match resolve_image_src(raw_src, &page.url) {
+        for raw_src in page.images {
+            let image_url = match resolve_image_src(raw_src, page.url) {
                 Ok(url) => url,
                 Err(affected) => {
                     push_warning_once(
@@ -404,7 +416,9 @@ fn build_page_lookup(pages: Vec<CrawlPage>) -> HashMap<String, PageSource> {
     lookup
 }
 
-fn build_resource_lookup(resources: Vec<CrawlResource>) -> HashMap<String, ResourceSource> {
+pub(crate) fn build_resource_lookup(
+    resources: Vec<CrawlResource>,
+) -> HashMap<String, ResourceSource> {
     let mut lookup = HashMap::new();
     for resource in resources {
         let Ok(url) = Url::parse(&resource.url) else {
@@ -597,11 +611,12 @@ fn safe_warning_detail(raw: &str) -> String {
             }
         })
         .collect::<String>();
-    let mut safe = collapse_whitespace(&safe);
-    if safe.len() > 160 {
-        safe.truncate(160);
+    let safe = collapse_whitespace(&safe);
+    if safe.chars().count() > 160 {
+        safe.chars().take(160).collect()
+    } else {
+        safe
     }
-    safe
 }
 
 fn push_warning_once(

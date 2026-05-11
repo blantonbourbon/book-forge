@@ -547,6 +547,7 @@ async fn execute_single(
     let result = convert_single_page(SinglePageInput {
         source_url: fetched.final_url,
         html,
+        resources: Vec::new(),
         metadata: summary.metadata,
         options: ConversionOptions {
             include_images: summary.options.include_images,

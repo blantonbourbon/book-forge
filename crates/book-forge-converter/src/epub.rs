@@ -22,8 +22,9 @@ pub(crate) struct EpubResource {
 pub(crate) fn generate_single_epub(
     metadata: &SanitizedMetadata,
     chapter: &Chapter,
+    resources: &[EpubResource],
 ) -> Result<Vec<u8>, ConversionError> {
-    generate_epub(metadata, std::slice::from_ref(chapter), &[])
+    generate_epub(metadata, std::slice::from_ref(chapter), resources)
 }
 
 pub(crate) fn generate_epub(

@@ -35,25 +35,6 @@ pub(crate) struct ImageRewriteContext<'a> {
     pub(crate) packaged_paths: &'a HashMap<String, String>,
 }
 
-pub(crate) fn extract_single_chapter(
-    html: &str,
-    source_url: &Url,
-    metadata: &SanitizedMetadata,
-    options: &ConversionOptions,
-) -> Result<Chapter, ConversionError> {
-    let analysis = analyze_chapter(html, source_url, metadata)?;
-    render_chapter(
-        html,
-        source_url,
-        metadata,
-        options,
-        1,
-        &analysis.title,
-        None,
-        None,
-    )
-}
-
 pub(crate) fn analyze_chapter(
     html: &str,
     _source_url: &Url,
@@ -383,6 +364,11 @@ fn safe_href(
 
     if let Ok(url) = Url::parse(href) {
         return match url.scheme() {
+            "http" | "https" if same_document(source_url, &url) => url
+                .fragment()
+                .and_then(sanitize_id)
+                .filter(|fragment| ids.contains(fragment))
+                .map(|fragment| format!("#{fragment}")),
             "http" | "https" | "mailto" => Some(href.to_string()),
             _ => None,
         };
@@ -476,11 +462,7 @@ fn safe_image_src(
 }
 
 fn same_document(left: &Url, right: &Url) -> bool {
-    left.scheme() == right.scheme()
-        && left.host_str() == right.host_str()
-        && left.port_or_known_default() == right.port_or_known_default()
-        && left.path() == right.path()
-        && left.query() == right.query()
+    normalize_page_url(left) == normalize_page_url(right)
 }
 
 pub(crate) fn sanitize_id(raw: &str) -> Option<String> {

@@ -476,3 +476,50 @@ fn include_images_off_and_failed_images_leave_no_broken_references() {
     assert!(failed_chapter.contains("Missing image fixture"));
     assert!(failed_chapter.contains("Unsupported image scheme"));
 }
+
+#[test]
+fn recoverable_warning_details_truncate_on_utf8_character_boundaries() {
+    let long_non_ascii_detail = format!("{}{}", "a".repeat(159), "é".repeat(5));
+
+    let result = convert_crawl(CrawlInput {
+        start_url: "https://example.test/crawl-graph/index.html".to_string(),
+        pages: vec![
+            page(
+                "https://example.test/crawl-graph/index.html",
+                &fixture("html/crawl-graph/index.html"),
+            ),
+            failed_page(
+                "https://example.test/crawl-graph/chapter-one.html",
+                &long_non_ascii_detail,
+            ),
+        ],
+        resources: Vec::new(),
+        metadata: metadata(),
+        options: ConversionOptions {
+            include_images: false,
+        },
+        crawl: CrawlOptions {
+            prefix_url: "https://example.test/crawl-graph/".to_string(),
+            max_depth: 1,
+            max_pages: 5,
+            ..CrawlOptions::default()
+        },
+    })
+    .expect("non-ASCII warning detail should not panic conversion");
+
+    let warning = result
+        .warnings
+        .iter()
+        .find(|warning| {
+            warning.code == "page_fetch_failed"
+                && warning.affected.as_deref()
+                    == Some("https://example.test/crawl-graph/chapter-one.html")
+        })
+        .expect("failed page warning should be present");
+    let detail = warning
+        .message
+        .strip_prefix("Page was skipped: ")
+        .expect("warning should include safe detail");
+    assert_eq!(detail.chars().count(), 160);
+    assert!(detail.ends_with('é'));
+}

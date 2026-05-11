@@ -5,6 +5,8 @@ mod metadata;
 mod text;
 mod url_tools;
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
@@ -56,6 +58,8 @@ impl Default for CrawlOptions {
 pub struct SinglePageInput {
     pub source_url: String,
     pub html: String,
+    #[serde(default)]
+    pub resources: Vec<CrawlResource>,
     pub metadata: BookMetadata,
     pub options: ConversionOptions,
 }
@@ -156,9 +160,40 @@ pub fn boundary_name() -> &'static str {
 pub fn convert_single_page(input: SinglePageInput) -> Result<ConversionResult, ConversionError> {
     let source_url = validate_source_url(&input.source_url)?;
     let metadata = metadata::sanitize_metadata(input.metadata, source_url.as_str());
-    let chapter =
-        html::extract_single_chapter(&input.html, &source_url, &metadata, &input.options)?;
-    let epub_bytes = epub::generate_single_epub(&metadata, &chapter)?;
+    let analysis = html::analyze_chapter(&input.html, &source_url, &metadata)?;
+
+    let mut warnings = Vec::new();
+    let mut warning_keys = HashSet::new();
+    let (resources, image_paths) = if input.options.include_images {
+        let resource_lookup = crawl::build_resource_lookup(input.resources);
+        crawl::collect_image_resources(
+            &[crawl::ImageSource {
+                url: &source_url,
+                images: &analysis.images,
+            }],
+            &resource_lookup,
+            &mut warnings,
+            &mut warning_keys,
+        )
+    } else {
+        (Vec::new(), Default::default())
+    };
+
+    let image_rewrites = html::ImageRewriteContext {
+        packaged_paths: &image_paths,
+    };
+    let chapter = html::render_chapter(
+        &input.html,
+        &source_url,
+        &metadata,
+        &input.options,
+        1,
+        &analysis.title,
+        None,
+        Some(&image_rewrites),
+    )?;
+    warnings.extend(chapter.warnings.iter().cloned());
+    let epub_bytes = epub::generate_single_epub(&metadata, &chapter, &resources)?;
     let download_filename = metadata::safe_download_filename(&metadata.title);
 
     Ok(ConversionResult {
@@ -166,7 +201,7 @@ pub fn convert_single_page(input: SinglePageInput) -> Result<ConversionResult, C
         download_filename,
         chapter_count: 1,
         metadata,
-        warnings: chapter.warnings,
+        warnings,
     })
 }
 

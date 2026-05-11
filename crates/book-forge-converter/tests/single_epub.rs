@@ -6,7 +6,8 @@ use std::{
 };
 
 use book_forge_converter::{
-    BookMetadata, ConversionError, ConversionOptions, SinglePageInput, convert_single_page,
+    BookMetadata, ConversionError, ConversionOptions, CrawlResource, SinglePageInput,
+    convert_single_page,
 };
 use book_forge_epub_inspector::inspect_epub;
 use zip::ZipArchive;
@@ -20,10 +21,20 @@ fn fixture(path: &str) -> String {
     .expect("fixture should be readable")
 }
 
+fn fixture_bytes(path: &str) -> Vec<u8> {
+    fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(path),
+    )
+    .expect("fixture bytes should be readable")
+}
+
 fn convert_fixture(path: &str, metadata: BookMetadata) -> book_forge_converter::ConversionResult {
     convert_single_page(SinglePageInput {
         source_url: "https://example.test/book/index.html".to_string(),
         html: fixture(path),
+        resources: Vec::new(),
         metadata,
         options: ConversionOptions::default(),
     })
@@ -71,6 +82,15 @@ fn assert_markers_in_order(text: &str, markers: &[&str]) {
             .find(marker)
             .unwrap_or_else(|| panic!("missing marker {marker:?} in {text}"));
         last += offset;
+    }
+}
+
+fn image_resource(url: &str, media_type: &str, bytes: Vec<u8>) -> CrawlResource {
+    CrawlResource {
+        url: url.to_string(),
+        media_type: media_type.to_string(),
+        bytes,
+        failure: None,
     }
 }
 
@@ -197,6 +217,7 @@ fn unsafe_internal_references_are_neutralized_and_resolvable_links_survive() {
     let result = convert_single_page(SinglePageInput {
         source_url: "https://example.test/book/index.html".to_string(),
         html: html.to_string(),
+        resources: Vec::new(),
         metadata: BookMetadata {
             title: "Reference Fixture".to_string(),
             author: "Book Forge".to_string(),
@@ -220,10 +241,138 @@ fn unsafe_internal_references_are_neutralized_and_resolvable_links_survive() {
 }
 
 #[test]
+fn absolute_same_document_links_rewrite_existing_fragments_and_neutralize_missing_anchors() {
+    let html = r##"
+        <!doctype html>
+        <html lang="en">
+          <head><title>Same Document Fixture</title></head>
+          <body>
+            <article>
+              <h1>Same Document Fixture</h1>
+              <p id="section">marker-same-doc-001: target paragraph.</p>
+              <a href="https://example.test/book/index.html#section">Absolute same-document target</a>
+              <a href="https://example.test/book/index.html#missing">Absolute missing target</a>
+              <a href="https://example.org/permitted">Permitted external link</a>
+            </article>
+          </body>
+        </html>
+    "##;
+
+    let result = convert_single_page(SinglePageInput {
+        source_url: "https://example.test/book/index.html".to_string(),
+        html: html.to_string(),
+        resources: Vec::new(),
+        metadata: BookMetadata {
+            title: "Same Document Fixture".to_string(),
+            author: "Book Forge".to_string(),
+            language: "en".to_string(),
+            description: "Absolute same-document link regression".to_string(),
+        },
+        options: ConversionOptions::default(),
+    })
+    .expect("same-document fixture should convert");
+    let report = inspect_bytes(&result.epub_bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+
+    let chapter = chapter_xhtml(&result.epub_bytes);
+    assert!(chapter.contains("href=\"#section\""));
+    assert!(chapter.contains("Absolute same-document target"));
+    assert!(chapter.contains("Absolute missing target"));
+    assert!(chapter.contains("href=\"https://example.org/permitted\""));
+    assert!(!chapter.contains("https://example.test/book/index.html#section"));
+    assert!(!chapter.contains("https://example.test/book/index.html#missing"));
+    assert!(!chapter.contains("href=\"#missing\""));
+}
+
+#[test]
+fn single_page_include_images_embeds_supplied_images_and_disabled_mode_has_no_broken_refs() {
+    let html = r#"
+        <!doctype html>
+        <html lang="en">
+          <head><title>Single Image Fixture</title></head>
+          <body>
+            <article>
+              <h1>Single Image Fixture</h1>
+              <p>marker-single-image-001: page with one supplied image.</p>
+              <img src="/images/logo.svg" alt="Book Forge logo fixture" />
+            </article>
+          </body>
+        </html>
+    "#;
+    let input = |include_images| SinglePageInput {
+        source_url: "https://example.test/html/images/index.html".to_string(),
+        html: html.to_string(),
+        resources: vec![image_resource(
+            "https://example.test/images/logo.svg",
+            "image/svg+xml",
+            fixture_bytes("images/logo.svg"),
+        )],
+        metadata: BookMetadata {
+            title: "Single Image Fixture".to_string(),
+            author: "Book Forge".to_string(),
+            language: "en".to_string(),
+            description: "Single-page image option regression".to_string(),
+        },
+        options: ConversionOptions { include_images },
+    };
+
+    let embedded = convert_single_page(input(true)).expect("enabled images should convert");
+    let embedded_report = inspect_bytes(&embedded.epub_bytes);
+    assert!(
+        embedded_report.ok,
+        "inspection errors: {:?}",
+        embedded_report.errors
+    );
+    let embedded_package = embedded_report.package.expect("package should inspect");
+    assert!(
+        embedded_package
+            .manifest
+            .iter()
+            .any(|item| item.media_type == "image/svg+xml")
+    );
+    assert!(
+        embedded_report
+            .entries
+            .iter()
+            .any(|entry| entry.starts_with("EPUB/images/") && entry.ends_with(".svg"))
+    );
+    let embedded_chapter = chapter_xhtml(&embedded.epub_bytes);
+    assert!(embedded_chapter.contains("<img src=\"../images/"));
+    assert!(embedded_chapter.contains("alt=\"Book Forge logo fixture\""));
+    assert!(!embedded_chapter.contains("src=\"https://"));
+
+    let disabled = convert_single_page(input(false)).expect("disabled images should convert");
+    let disabled_report = inspect_bytes(&disabled.epub_bytes);
+    assert!(
+        disabled_report.ok,
+        "inspection errors: {:?}",
+        disabled_report.errors
+    );
+    let disabled_package = disabled_report.package.expect("package should inspect");
+    assert!(
+        !disabled_package
+            .manifest
+            .iter()
+            .any(|item| item.media_type.starts_with("image/"))
+    );
+    assert!(
+        !disabled_report
+            .entries
+            .iter()
+            .any(|entry| entry.starts_with("EPUB/images/"))
+    );
+    let disabled_chapter = chapter_xhtml(&disabled.epub_bytes);
+    assert!(!disabled_chapter.contains("<img "));
+    assert!(!disabled_chapter.contains("/images/logo.svg"));
+    assert!(disabled_chapter.contains("Book Forge logo fixture"));
+}
+
+#[test]
 fn fatal_failures_return_structured_errors_instead_of_epub_bytes() {
     let invalid_url = convert_single_page(SinglePageInput {
         source_url: "file:///etc/passwd".to_string(),
         html: fixture("html/single-page/index.html"),
+        resources: Vec::new(),
         metadata: metadata_fixture(),
         options: ConversionOptions::default(),
     })
@@ -239,6 +388,7 @@ fn fatal_failures_return_structured_errors_instead_of_epub_bytes() {
         source_url: "https://example.test/empty.html".to_string(),
         html: "<html><body><script>alert(1)</script><form><input /></form></body></html>"
             .to_string(),
+        resources: Vec::new(),
         metadata: metadata_fixture(),
         options: ConversionOptions::default(),
     })
