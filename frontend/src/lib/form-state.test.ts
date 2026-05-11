@@ -63,12 +63,33 @@ describe("conversion form defaults and validation", () => {
     for (const sourceUrl of [
       "http://example.test/single-page/index.html",
       "https://example.test/single-page/index.html",
+      "https://fdroid.org/",
+      "https://fc.example/",
     ]) {
       const result = validateForm({ ...DEFAULT_FORM_VALUES, sourceUrl });
 
       expect(result.canSubmit).toBe(true);
       expect(result.errors.sourceUrl ?? []).toEqual([]);
     }
+  });
+
+  it("blocks IPv6 unique-local literals without rejecting similar DNS hostnames", () => {
+    for (const sourceUrl of ["http://[fc00::1]/", "https://[fd12:3456::1]/"]) {
+      expect(
+        validateForm({ ...DEFAULT_FORM_VALUES, sourceUrl }).errors.sourceUrl,
+      ).toContain(
+        "Source URL cannot target localhost, private, link-local, or metadata addresses.",
+      );
+    }
+
+    const crawl = {
+      ...DEFAULT_FORM_VALUES,
+      mode: "crawl" as const,
+      sourceUrl: "https://fc.example/book/index.html",
+      crawlPrefixUrl: "https://fc.example/book/",
+    };
+
+    expect(validateForm(crawl).canSubmit).toBe(true);
   });
 
   it("validates crawl prefix, depth, and page limits explicitly", () => {

@@ -324,11 +324,13 @@ function hostLooksUnsafe(hostname: string): boolean {
     return true;
   }
 
+  const isIpv6Literal = host.includes(":");
   if (
-    host === "::1" ||
-    host.startsWith("fe80:") ||
-    host.startsWith("fc") ||
-    host.startsWith("fd")
+    isIpv6Literal &&
+    (host === "::1" ||
+      host.startsWith("fe80:") ||
+      host.startsWith("fc") ||
+      host.startsWith("fd"))
   ) {
     return true;
   }

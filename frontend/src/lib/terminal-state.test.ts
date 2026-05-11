@@ -93,10 +93,13 @@ describe("submission and refresh recovery presentation", () => {
     expect(presentation.phase).toBe("failed");
     expect(presentation.statusText).toContain("Job was not started");
     expect(presentation.errors).toEqual([error]);
+    expect(presentation).toMatchObject({ progressVisible: false });
     expect(presentation.canEditForm).toBe(true);
     expect(presentation.canSubmit).toBe(true);
     expect(presentation.download.available).toBe(false);
+    expect(presentation.download.href).toBeNull();
     expect(presentation.weread.enabled).toBe(false);
+    expect(presentation.weread.href).toBeNull();
   });
 
   it("treats polling refresh failures as recoverable failed states", () => {

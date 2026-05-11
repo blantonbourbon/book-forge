@@ -30,6 +30,7 @@ export interface JobPresentation {
 export interface FailurePresentation {
   phase: "failed";
   statusText: string;
+  progressVisible: boolean;
   errors: ApiErrorBody[];
   canEditForm: boolean;
   canSubmit: boolean;
@@ -132,6 +133,7 @@ export function preStartFailurePresentation(
   return {
     phase: "failed",
     statusText: `Job was not started: ${error.message}`,
+    progressVisible: false,
     errors: [error],
     canEditForm: true,
     canSubmit: true,
@@ -147,6 +149,7 @@ export function pollingFailurePresentation(
   return {
     phase: "failed",
     statusText: `Progress could not be refreshed: ${error.message}`,
+    progressVisible: false,
     errors: [error],
     canEditForm: true,
     canSubmit: true,
