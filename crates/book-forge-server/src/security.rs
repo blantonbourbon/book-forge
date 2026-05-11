@@ -97,14 +97,21 @@ fn validate_url_without_dns(url: &Url) -> Result<(), SecurityError> {
 
 fn public_domain_for_dns(url: &Url) -> Option<String> {
     match url.host()? {
-        Host::Domain(domain) => {
-            let normalized = normalize_domain(domain);
+        Host::Domain(_) => {
+            let normalized = canonical_domain_for_outbound_request(url)?;
             if is_fixture_domain(&normalized) || normalized.parse::<IpAddr>().is_ok() {
                 None
             } else {
                 Some(normalized)
             }
         }
+        Host::Ipv4(_) | Host::Ipv6(_) => None,
+    }
+}
+
+pub fn canonical_domain_for_outbound_request(url: &Url) -> Option<String> {
+    match url.host()? {
+        Host::Domain(domain) => Some(normalize_domain(domain)),
         Host::Ipv4(_) | Host::Ipv6(_) => None,
     }
 }

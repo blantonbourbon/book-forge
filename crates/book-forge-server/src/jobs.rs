@@ -529,7 +529,7 @@ async fn execute_single(
     let fetched = fetch_html(
         &fetcher,
         source_url.clone(),
-        DEFAULT_FETCH_TIMEOUT_MILLIS,
+        Duration::from_millis(DEFAULT_FETCH_TIMEOUT_MILLIS),
         DEFAULT_MAX_TOTAL_BYTES,
     )
     .await
@@ -548,11 +548,11 @@ async fn execute_single(
         .map_err(|error| (fetch_error_body(error), progress.clone()))?;
     let resources = if summary.options.include_images {
         let mut seen_resources = HashSet::new();
-        let (resources, resource_bytes) = fetch_image_resources(
+        let (resources, resource_bytes, _) = fetch_image_resources(
             &fetcher,
             &html,
             &base_url,
-            DEFAULT_FETCH_TIMEOUT_MILLIS,
+            FetchTimeoutBudget::Fixed(Duration::from_millis(DEFAULT_FETCH_TIMEOUT_MILLIS)),
             DEFAULT_MAX_TOTAL_BYTES,
             &mut seen_resources,
         )
@@ -595,6 +595,7 @@ async fn execute_crawl(
     let mut pages = Vec::new();
     let mut resources = Vec::new();
     let started = Instant::now();
+    let deadline = started + Duration::from_millis(crawl.max_duration_millis);
     let mut queue = VecDeque::from([(source_url.clone(), 0usize)]);
     let mut seen_pages = HashSet::from([normalize_page_key(&source_url)]);
     let mut seen_resources = HashSet::new();
@@ -605,16 +606,16 @@ async fn execute_crawl(
     jobs.update_progress(id, progress.clone()).await;
 
     while let Some((page_url, depth)) = queue.pop_front() {
-        if started.elapsed() > Duration::from_millis(crawl.max_duration_millis) {
+        let Some(page_fetch_timeout) = remaining_crawl_duration(deadline) else {
             crawl_time_limit_reached = true;
             break;
-        }
+        };
 
         progress.current_depth = progress.current_depth.max(depth);
         let fetched = match fetch_html(
             &fetcher,
             page_url.clone(),
-            crawl.max_duration_millis,
+            page_fetch_timeout,
             crawl.max_total_bytes,
         )
         .await
@@ -630,9 +631,16 @@ async fn execute_crawl(
                     html: None,
                     failure: Some(error.message),
                 });
+                if crawl_deadline_expired(deadline) {
+                    crawl_time_limit_reached = true;
+                    break;
+                }
                 continue;
             }
         };
+        if crawl_deadline_expired(deadline) {
+            crawl_time_limit_reached = true;
+        }
 
         let page_bytes = fetched.bytes.len();
         if progress.bytes_fetched.saturating_add(page_bytes) > crawl.max_total_bytes {
@@ -660,17 +668,25 @@ async fn execute_crawl(
         });
 
         if summary.options.include_images {
-            let (page_resources, resource_bytes) = fetch_image_resources(
-                &fetcher,
-                &html,
-                &page_url,
-                crawl.max_duration_millis,
-                crawl.max_total_bytes,
-                &mut seen_resources,
-            )
-            .await;
+            let (page_resources, resource_bytes, resources_time_limit_reached) =
+                fetch_image_resources(
+                    &fetcher,
+                    &html,
+                    &page_url,
+                    FetchTimeoutBudget::Deadline(deadline),
+                    crawl.max_total_bytes,
+                    &mut seen_resources,
+                )
+                .await;
+            crawl_time_limit_reached |= resources_time_limit_reached;
             progress.bytes_fetched = progress.bytes_fetched.saturating_add(resource_bytes);
             resources.extend(page_resources);
+        }
+
+        if crawl_deadline_expired(deadline) {
+            crawl_time_limit_reached = true;
+            jobs.update_progress(id, progress.clone()).await;
+            break;
         }
 
         for link_url in extract_link_urls(&html, &page_url) {
@@ -690,6 +706,10 @@ async fn execute_crawl(
         }
 
         jobs.update_progress(id, progress.clone()).await;
+    }
+
+    if crawl_deadline_expired(deadline) {
+        crawl_time_limit_reached = true;
     }
 
     let mut result = convert_crawl(CrawlInput {
@@ -721,16 +741,52 @@ async fn execute_crawl(
     Ok((result, progress))
 }
 
+#[derive(Clone, Copy)]
+enum FetchTimeoutBudget {
+    Fixed(Duration),
+    Deadline(Instant),
+}
+
+impl FetchTimeoutBudget {
+    fn remaining(self) -> Option<Duration> {
+        match self {
+            Self::Fixed(timeout) => Some(timeout),
+            Self::Deadline(deadline) => remaining_crawl_duration(deadline),
+        }
+    }
+
+    fn expired(self) -> bool {
+        match self {
+            Self::Fixed(_) => false,
+            Self::Deadline(deadline) => crawl_deadline_expired(deadline),
+        }
+    }
+}
+
+fn remaining_crawl_duration(deadline: Instant) -> Option<Duration> {
+    let now = Instant::now();
+    if now >= deadline {
+        None
+    } else {
+        Some(deadline.duration_since(now))
+    }
+}
+
+fn crawl_deadline_expired(deadline: Instant) -> bool {
+    Instant::now() >= deadline
+}
+
 async fn fetch_image_resources(
     fetcher: &impl Fetcher,
     html: &str,
     page_url: &Url,
-    timeout_millis: u64,
+    timeout_budget: FetchTimeoutBudget,
     max_bytes: usize,
     seen_resources: &mut HashSet<String>,
-) -> (Vec<CrawlResource>, usize) {
+) -> (Vec<CrawlResource>, usize, bool) {
     let mut resources = Vec::new();
     let mut bytes_fetched = 0usize;
+    let mut time_limit_reached = false;
     for image_url in extract_image_urls(html, page_url) {
         if !matches!(image_url.scheme(), "http" | "https") {
             continue;
@@ -739,14 +795,11 @@ async fn fetch_image_resources(
         if !seen_resources.insert(resource_key) {
             continue;
         }
-        match fetcher
-            .fetch(
-                image_url.clone(),
-                Duration::from_millis(timeout_millis),
-                max_bytes,
-            )
-            .await
-        {
+        let Some(timeout) = timeout_budget.remaining() else {
+            time_limit_reached = true;
+            break;
+        };
+        match fetcher.fetch(image_url.clone(), timeout, max_bytes).await {
             Ok(resource) => {
                 bytes_fetched = bytes_fetched.saturating_add(resource.bytes.len());
                 resources.push(CrawlResource {
@@ -763,9 +816,13 @@ async fn fetch_image_resources(
                 failure: Some(error.message),
             }),
         }
+        if timeout_budget.expired() {
+            time_limit_reached = true;
+            break;
+        }
     }
 
-    (resources, bytes_fetched)
+    (resources, bytes_fetched, time_limit_reached)
 }
 
 fn sanitize_warnings(warnings: Vec<ConversionWarning>) -> Vec<ConversionWarning> {
@@ -782,12 +839,10 @@ fn sanitize_warnings(warnings: Vec<ConversionWarning>) -> Vec<ConversionWarning>
 async fn fetch_html(
     fetcher: &impl Fetcher,
     url: Url,
-    timeout_millis: u64,
+    timeout: Duration,
     max_bytes: usize,
 ) -> Result<FetchedResponse, FetchError> {
-    let fetched = fetcher
-        .fetch(url, Duration::from_millis(timeout_millis), max_bytes)
-        .await?;
+    let fetched = fetcher.fetch(url, timeout, max_bytes).await?;
     if !is_html_like(&fetched.media_type) {
         return Err(FetchError::new(
             "unsupported_media_type",

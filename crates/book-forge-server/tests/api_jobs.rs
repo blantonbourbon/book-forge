@@ -199,6 +199,27 @@ async fn start_no_content_length_html_server(body_size: usize) -> SocketAddr {
     addr
 }
 
+async fn start_static_html_server(body: &'static str) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("test TCP listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose address");
+    tokio::spawn(async move {
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        write_all(&stream, headers.as_bytes()).await;
+        write_all(&stream, body.as_bytes()).await;
+    });
+    addr
+}
+
 async fn write_all(stream: &tokio::net::TcpStream, mut bytes: &[u8]) {
     while !bytes.is_empty() {
         if stream.writable().await.is_err() {
@@ -446,6 +467,68 @@ async fn runtime_limits_cover_slow_fixture_crawl_time_and_streaming_byte_limit()
             .is_some_and(|message| message.contains("byte limit"))
     );
     assert_safe_error(&json!({"error": stream_terminal["errors"][0]}));
+}
+
+#[tokio::test]
+async fn crawl_duration_warning_surfaces_when_queue_drains_after_deadline() {
+    let duration_app = delayed_fixture_app(Duration::from_millis(70));
+    let mut payload = crawl_payload(1, 2);
+    payload["sourceUrl"] = json!("https://example.test/images-crawl/index.html");
+    payload["crawl"]["prefixUrl"] = json!("https://example.test/images-crawl/");
+    payload["crawl"]["maxDurationMillis"] = json!(120);
+
+    let created = create_job(duration_app.clone(), payload).await;
+    let terminal = wait_for_terminal(
+        duration_app,
+        created["id"].as_str().expect("id should be present"),
+    )
+    .await;
+
+    assert_eq!(terminal["status"], "completed");
+    assert_eq!(terminal["progress"]["pagesFetched"], 1);
+    assert_eq!(terminal["progress"]["pagesSkipped"], 1);
+    assert!(
+        terminal["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .any(|warning| warning["code"] == "crawl_time_limit"
+                && warning["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("time limit"))),
+        "crawl duration expiry after the final queued page was not surfaced: {terminal:#?}"
+    );
+}
+
+#[tokio::test]
+async fn trailing_dot_hosts_use_canonical_resolver_pinning() {
+    let pinned_addr = start_static_html_server(
+        "<!doctype html><html><head><title>Pinned DNS</title></head><body><main><h1>Pinned DNS</h1><p>marker-trailing-dot-pinning</p></main></body></html>",
+    )
+    .await;
+    let app = resolved_host_app("example.test", pinned_addr);
+    let source_url = format!(
+        "http://example.test.:{}/single-page/index.html",
+        pinned_addr.port()
+    );
+
+    let created = create_job(
+        app.clone(),
+        single_payload(&source_url, "Trailing Dot DNS Pinning"),
+    )
+    .await;
+    let id = created["id"].as_str().expect("id should be present");
+    let terminal = wait_for_terminal(app.clone(), id).await;
+
+    assert_eq!(terminal["status"], "completed", "{terminal:#?}");
+    let (status, headers, bytes) =
+        binary_request(app, Method::GET, &format!("/api/jobs/{id}/download")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/epub+zip");
+    let report = inspect_epub_bytes(&bytes);
+    assert!(report.ok, "inspection errors: {:?}", report.errors);
+    let package = report.package.expect("package should inspect");
+    assert_eq!(package.nav_entries[0].label, "Pinned DNS");
 }
 
 #[tokio::test]

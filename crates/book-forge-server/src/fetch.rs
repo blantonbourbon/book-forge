@@ -216,6 +216,7 @@ async fn fetch_http(
                 let resolved_target = security::resolve_vetted_addrs(&url)
                     .await
                     .map_err(security_fetch_error)?;
+                canonicalize_outbound_host(&mut url)?;
                 let request_client = client_for_resolved_target(&client, resolved_target.as_ref())?;
 
                 let mut response = request_client
@@ -301,6 +302,21 @@ async fn fetch_http(
     tokio::time::timeout(timeout, future)
         .await
         .map_err(|_| FetchError::new("fetch_timeout", "Fetching source content timed out."))?
+}
+
+fn canonicalize_outbound_host(url: &mut Url) -> Result<(), FetchError> {
+    let Some(canonical_host) = security::canonical_domain_for_outbound_request(url) else {
+        return Ok(());
+    };
+    if url.host_str() == Some(canonical_host.as_str()) {
+        return Ok(());
+    }
+    url.set_host(Some(&canonical_host)).map_err(|_| {
+        FetchError::new(
+            "unsafe_url",
+            "Source URL host was not accepted for outbound fetching.",
+        )
+    })
 }
 
 fn client_for_resolved_target(
