@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install dependencies
+        run: npm run validate:install
+
+      - name: Check formatting
+        run: npm run format
+
+      - name: Run linters
+        run: npm run lint
+
+      - name: Run type checks
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Audit production frontend dependencies
+        run: npm audit --prefix frontend --omit=dev --audit-level=moderate
+
+      - name: Scan for deployment secrets
+        run: |
+          fly_token_prefix="Fly""V1"
+          token_assignment="FLY_API_TOKEN""="
+          echoed_token="echo ""\$""FLY_API_TOKEN"
+          fly_config=".fly""/config"
+          if grep -RInE --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=frontend/node_modules --exclude-dir=frontend/dist "${fly_token_prefix}|${token_assignment}|${echoed_token}|${fly_config}" .; then
+            echo "Potential deployment secret pattern found."
+            exit 1
+          fi
+
+      - name: Build Docker image
+        run: docker build -t book-forge:ci .
+
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Fly token availability
+        id: fly-token
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -n "$FLY_API_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Fly CLI
+        if: steps.fly-token.outputs.available == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        if: steps.fly-token.outputs.available == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config fly.toml
+
+      - name: Skip deploy without secret
+        if: steps.fly-token.outputs.available != 'true'
+        run: echo "Skipping Fly deploy because FLY_API_TOKEN is not configured."
