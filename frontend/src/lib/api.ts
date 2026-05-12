@@ -38,9 +38,20 @@ export interface JobResponse {
   downloadUrl?: string;
 }
 
+export interface MetadataPreview {
+  title: string;
+  author: string;
+  description: string;
+  finalUrl: string;
+}
+
 export interface ApiClientOptions {
   apiOrigin?: string;
   fetcher?: FetchLike;
+}
+
+export interface MetadataPreviewOptions extends ApiClientOptions {
+  useBrowser?: boolean;
 }
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -88,6 +99,17 @@ export async function getJob(
     `/api/jobs/${encodeURIComponent(id)}`,
     options,
   );
+}
+
+export async function previewMetadata(
+  sourceUrl: string,
+  options: MetadataPreviewOptions = {},
+): Promise<MetadataPreview> {
+  const params = new URLSearchParams({ url: sourceUrl });
+  if (options.useBrowser) {
+    params.set("useBrowser", "true");
+  }
+  return requestJson<MetadataPreview>(`/api/preview?${params}`, options);
 }
 
 export function downloadUrlForJob(

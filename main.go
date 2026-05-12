@@ -23,6 +23,9 @@ func main() {
 	if staticDir != "" {
 		state.StaticRoot = staticDir
 	}
+	if sidecarURL := os.Getenv("CLOAK_SIDECAR_URL"); sidecarURL != "" {
+		state.BrowserFetcher = server.NewBrowserFetcher(sidecarURL)
+	}
 
 	r := server.SetupRouter(state)
 

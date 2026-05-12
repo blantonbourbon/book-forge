@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createJob, downloadUrlForJob, getJob, resolveApiOrigin } from "./api";
+import {
+  createJob,
+  downloadUrlForJob,
+  getJob,
+  previewMetadata,
+  resolveApiOrigin,
+} from "./api";
 
 describe("API origin resolution", () => {
   it("uses same-origin browser requests so dev proxy and production static serving work", () => {
@@ -18,12 +24,12 @@ describe("Book Forge API client", () => {
       metadata: {
         title: "API Client",
         author: "Tester",
-        language: "en",
         description: "",
       },
       options: {
         includeImages: true,
         outputTarget: "epub" as const,
+        useBrowser: false,
       },
     };
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
@@ -103,10 +109,13 @@ describe("Book Forge API client", () => {
           metadata: {
             title: "Bad",
             author: "Tester",
-            language: "en",
             description: "",
           },
-          options: { includeImages: false, outputTarget: "epub" },
+          options: {
+            includeImages: false,
+            outputTarget: "epub",
+            useBrowser: false,
+          },
         },
         { apiOrigin: "", fetcher },
       ),
@@ -116,6 +125,33 @@ describe("Book Forge API client", () => {
       fields: ["sourceUrl"],
       status: 422,
     });
+  });
+
+  it("fetches source metadata previews with optional browser rendering", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        title: "Preview Title",
+        author: "Preview Author",
+        description: "Preview description",
+        finalUrl: "https://example.test/book",
+      });
+    };
+
+    const response = await previewMetadata("https://example.test/book", {
+      apiOrigin: "",
+      fetcher,
+      useBrowser: true,
+    });
+
+    expect(response.title).toBe("Preview Title");
+    expect(calls).toEqual([
+      {
+        url: "/api/preview?url=https%3A%2F%2Fexample.test%2Fbook&useBrowser=true",
+        init: undefined,
+      },
+    ]);
   });
 
   it("gates downloads to completed jobs with a current download URL", () => {

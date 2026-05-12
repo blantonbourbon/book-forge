@@ -15,9 +15,9 @@ describe("conversion form defaults and validation", () => {
       mode: "single",
       title: "Untitled Book",
       author: "Unknown Author",
-      language: "en",
       description: "",
       includeImages: true,
+      useBrowser: false,
       chapterStrategy: "source-order",
       outputTarget: "epub",
       crawlPrefixUrl: "",
@@ -26,7 +26,7 @@ describe("conversion form defaults and validation", () => {
     });
   });
 
-  it("rejects missing, malformed, unsupported, and invalid language input", () => {
+  it("rejects missing, malformed, and unsupported URL input", () => {
     const base = { ...DEFAULT_FORM_VALUES };
 
     expect(validateForm({ ...base, sourceUrl: "" }).errors.sourceUrl).toContain(
@@ -54,9 +54,6 @@ describe("conversion form defaults and validation", () => {
         sourceUrl: "https://example.test/redirects/to-private",
       }).canSubmit,
     ).toBe(true);
-    expect(
-      validateForm({ ...base, language: "english!" }).errors.language,
-    ).toContain("Use a valid language tag such as en or zh-CN.");
   });
 
   it("accepts HTTP and HTTPS source URLs when required fields are valid", () => {
@@ -168,7 +165,6 @@ describe("conversion form payloads and state helpers", () => {
       sourceUrl: "https://example.test/single-page/index.html",
       title: "Single Book",
       author: "A. Reader",
-      language: "en-US",
       description: "Single description",
       includeImages: false,
     };
@@ -179,12 +175,12 @@ describe("conversion form payloads and state helpers", () => {
       metadata: {
         title: "Single Book",
         author: "A. Reader",
-        language: "en-US",
         description: "Single description",
       },
       options: {
         includeImages: false,
         outputTarget: "epub",
+        useBrowser: false,
       },
     });
 

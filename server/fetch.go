@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -203,7 +206,7 @@ func (f *SharedFetcher) fetchHTTPImpl(u *url.URL, maxBytes int) (*FetchedRespons
 
 		client := f.Client
 		if vetted != nil && len(vetted.Addresses) > 0 {
-			client = clientWithDialer(vetted.Domain, vetted.Addresses, currentURL.Port())
+			client = clientWithDialer(vetted.Domain, vetted.Addresses, outboundPort(&currentURL))
 		}
 
 		resp, err := client.Do(req)
@@ -281,6 +284,16 @@ func clientWithDialer(domain string, ips []net.IP, port string) *http.Client {
 			},
 		},
 	}
+}
+
+func outboundPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
 }
 
 func fixtureRelativePath(u *url.URL) string {
@@ -406,4 +419,86 @@ func DefaultPrefixURL(sourceURL *url.URL) string {
 		prefix.Path = path
 	}
 	return prefix.String()
+}
+
+// ── Browser fetcher (CloakBrowser sidecar) ──
+
+type BrowserFetcher struct {
+	sidecarURL string
+	client     *http.Client
+}
+
+func NewBrowserFetcher(sidecarURL string) *BrowserFetcher {
+	return &BrowserFetcher{
+		sidecarURL: strings.TrimRight(sidecarURL, "/"),
+		client:     &http.Client{Timeout: 0},
+	}
+}
+
+func (f *BrowserFetcher) Fetch(urlStr string, timeout time.Duration, maxBytes int) (*FetchedResponse, error) {
+	type fetchRequest struct {
+		URL string `json:"url"`
+	}
+	type fetchError struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	type fetchResponse struct {
+		OK        bool        `json:"ok"`
+		HTML      string      `json:"html,omitempty"`
+		FinalURL  string      `json:"finalUrl,omitempty"`
+		MediaType string      `json:"mediaType,omitempty"`
+		Bytes     int         `json:"bytes,omitempty"`
+		Error     *fetchError `json:"error,omitempty"`
+	}
+
+	body, _ := json.Marshal(fetchRequest{URL: urlStr})
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", f.sidecarURL+"/fetch", bytes.NewReader(body))
+	if err != nil {
+		return nil, NewFetchError("fetch_failed", "Browser fetch could not be prepared.")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, NewFetchError("fetch_timeout", "Browser fetch timed out.")
+		}
+		return nil, NewFetchError("fetch_failed", "Browser sidecar was not reachable.")
+	}
+	defer resp.Body.Close()
+
+	var result fetchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, NewFetchError("fetch_failed", "Browser sidecar returned an unexpected response.")
+	}
+
+	if !result.OK {
+		code := "fetch_failed"
+		message := "Browser fetch failed."
+		if result.Error != nil {
+			code = result.Error.Code
+			message = result.Error.Message
+		}
+		return nil, NewFetchError(code, message)
+	}
+
+	finalURL := result.FinalURL
+	if finalURL == "" {
+		finalURL = urlStr
+	}
+	mediaType := result.MediaType
+	if mediaType == "" {
+		mediaType = "text/html; charset=utf-8"
+	}
+
+	return &FetchedResponse{
+		FinalURL:  finalURL,
+		MediaType: mediaType,
+		Bytes:     []byte(result.HTML),
+	}, nil
 }

@@ -22,9 +22,10 @@ const (
 )
 
 type AppState struct {
-	Jobs       *JobManager
-	Fetcher    *SharedFetcher
-	StaticRoot string
+	Jobs           *JobManager
+	Fetcher        *SharedFetcher
+	BrowserFetcher *BrowserFetcher
+	StaticRoot     string
 }
 
 func NewAppState(fetcher *SharedFetcher) *AppState {
@@ -63,6 +64,7 @@ type APIMetadata struct {
 type APIOptions struct {
 	IncludeImages bool   `json:"includeImages"`
 	OutputTarget  string `json:"outputTarget"`
+	UseBrowser    bool   `json:"useBrowser"`
 }
 
 type APICrawlOptions struct {
@@ -201,7 +203,7 @@ func (r *JobRecord) Response() JobResponse {
 	return resp
 }
 
-func (m *JobManager) CreateJob(fetcher *SharedFetcher, summary JobSummary) (*JobResponse, error) {
+func (m *JobManager) CreateJob(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary) (*JobResponse, error) {
 	id := uuid.New()
 	record := &JobRecord{
 		ID:       id,
@@ -213,7 +215,7 @@ func (m *JobManager) CreateJob(fetcher *SharedFetcher, summary JobSummary) (*Job
 	m.jobs[id] = record
 	m.mu.Unlock()
 
-	go m.executeJob(id, fetcher, summary)
+	go m.executeJob(id, fetcher, browserFetcher, summary)
 
 	return m.GetResponse(id)
 }
@@ -239,7 +241,7 @@ func (m *JobManager) Artifact(id uuid.UUID) (JobStatus, *Artifact) {
 	return record.Status, record.Artifact
 }
 
-func (m *JobManager) executeJob(id uuid.UUID, fetcher *SharedFetcher, summary JobSummary) {
+func (m *JobManager) executeJob(id uuid.UUID, fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary) {
 	m.markRunning(id)
 
 	var result *converter.ConversionResult
@@ -248,9 +250,9 @@ func (m *JobManager) executeJob(id uuid.UUID, fetcher *SharedFetcher, summary Jo
 
 	switch summary.Mode {
 	case ModeSingle:
-		result, progress, err = executeSingle(fetcher, summary)
+		result, progress, err = executeSingle(fetcher, browserFetcher, summary)
 	case ModeCrawl:
-		result, progress, err = executeCrawl(id, m, fetcher, summary)
+		result, progress, err = executeCrawl(id, m, fetcher, browserFetcher, summary)
 	}
 
 	if err != nil {
@@ -469,11 +471,20 @@ func defaultPrefix(sourceURL *url.URL) string {
 	return DefaultPrefixURL(sourceURL)
 }
 
-func executeSingle(fetcher *SharedFetcher, summary JobSummary) (*converter.ConversionResult, JobProgress, error) {
+func executeSingle(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary) (*converter.ConversionResult, JobProgress, error) {
 	progress := runningProgress(&summary)
 	sourceURL, _ := url.Parse(summary.SourceURL)
 
-	fetched, err := fetchHTML(fetcher, sourceURL.String(), time.Duration(defaultFetchTimeoutMs)*time.Millisecond, defaultMaxTotalBytes)
+	var fetched *FetchedResponse
+	var err error
+	if summary.Options.UseBrowser && browserFetcher == nil {
+		return nil, progress, NewFetchError("browser_unavailable", "Browser rendering is not configured on this server.")
+	}
+	if summary.Options.UseBrowser {
+		fetched, err = fetchHTMLBrowser(browserFetcher, sourceURL.String(), time.Duration(defaultFetchTimeoutMs)*time.Millisecond, defaultMaxTotalBytes)
+	} else {
+		fetched, err = fetchHTML(fetcher, sourceURL.String(), time.Duration(defaultFetchTimeoutMs)*time.Millisecond, defaultMaxTotalBytes)
+	}
 	if err != nil {
 		return nil, progress, err
 	}
@@ -540,7 +551,7 @@ func executeSingle(fetcher *SharedFetcher, summary JobSummary) (*converter.Conve
 	return result, progress, nil
 }
 
-func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, summary JobSummary) (*converter.ConversionResult, JobProgress, error) {
+func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary) (*converter.ConversionResult, JobProgress, error) {
 	crawl := summary.Crawl
 	progress := runningProgress(&summary)
 	sourceURL, _ := url.Parse(summary.SourceURL)
@@ -579,15 +590,23 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, summar
 			progress.CurrentDepth = depth
 		}
 
-		fetched, err := fetchHTML(fetcher, pageURL.String(), remaining, crawl.MaxTotalBytes)
-		if err != nil {
+		var pageFetchErr error
+		var fetched *FetchedResponse
+		if summary.Options.UseBrowser && browserFetcher == nil {
+			pageFetchErr = NewFetchError("browser_unavailable", "Browser rendering is not configured on this server.")
+		} else if summary.Options.UseBrowser {
+			fetched, pageFetchErr = fetchHTMLBrowser(browserFetcher, pageURL.String(), remaining, crawl.MaxTotalBytes)
+		} else {
+			fetched, pageFetchErr = fetchHTML(fetcher, pageURL.String(), remaining, crawl.MaxTotalBytes)
+		}
+		if pageFetchErr != nil {
 			if depth == 0 {
-				return nil, progress, err
+				return nil, progress, pageFetchErr
 			}
 			progress.PagesSkipped++
 			pages = append(pages, converter.CrawlPage{
 				URL:     pageURL.String(),
-				Failure: strPtr(err.Error()),
+				Failure: strPtr(pageFetchErr.Error()),
 			})
 			if time.Now().After(deadline) {
 				crawlTimeLimitReached = true
@@ -715,6 +734,17 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, summar
 }
 
 func fetchHTML(fetcher *SharedFetcher, urlStr string, timeout time.Duration, maxBytes int) (*FetchedResponse, error) {
+	fetched, err := fetcher.Fetch(urlStr, timeout, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !IsHTMLike(fetched.MediaType) {
+		return nil, NewFetchError("unsupported_media_type", "Fetched content was not an HTML document.")
+	}
+	return fetched, nil
+}
+
+func fetchHTMLBrowser(fetcher *BrowserFetcher, urlStr string, timeout time.Duration, maxBytes int) (*FetchedResponse, error) {
 	fetched, err := fetcher.Fetch(urlStr, timeout, maxBytes)
 	if err != nil {
 		return nil, err

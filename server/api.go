@@ -24,6 +24,7 @@ func SetupRouter(state *AppState) *gin.Engine {
 	api := r.Group("/api")
 	{
 		api.GET("/health", handleHealth)
+		api.GET("/preview", handlePreviewMetadata(state))
 		api.POST("/jobs", handleCreateJob(state))
 		api.GET("/jobs/:id", handleGetJob(state))
 		api.GET("/jobs/:id/download", handleDownload(state))
@@ -79,7 +80,7 @@ func handleCreateJob(state *AppState) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := state.Jobs.CreateJob(state.Fetcher, *summary)
+		resp, err := state.Jobs.CreateJob(state.Fetcher, state.BrowserFetcher, *summary)
 		if err != nil {
 			RespondError(c, NewAPIError(http.StatusInternalServerError, "job_creation_failed", err.Error()))
 			return

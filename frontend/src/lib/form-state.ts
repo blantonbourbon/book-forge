@@ -13,9 +13,9 @@ export interface FormValues {
   mode: ConversionMode;
   title: string;
   author: string;
-  language: string;
   description: string;
   includeImages: boolean;
+  useBrowser: boolean;
   chapterStrategy: ChapterStrategy;
   outputTarget: OutputTarget;
   crawlPrefixUrl: string;
@@ -29,12 +29,12 @@ export interface CreateJobPayload {
   metadata: {
     title: string;
     author: string;
-    language: string;
     description: string;
   };
   options: {
     includeImages: boolean;
     outputTarget: OutputTarget;
+    useBrowser: boolean;
   };
   crawl?: {
     prefixUrl: string;
@@ -64,9 +64,9 @@ export const DEFAULT_FORM_VALUES: FormValues = {
   mode: "single",
   title: "Untitled Book",
   author: "Unknown Author",
-  language: "en",
   description: "",
   includeImages: true,
+  useBrowser: false,
   chapterStrategy: "source-order",
   outputTarget: "epub",
   crawlPrefixUrl: "",
@@ -105,14 +105,6 @@ export function validateForm(values: FormValues): ValidationResult {
 
   if (!values.title.trim()) {
     addError(errors, "title", "Book title is required.");
-  }
-
-  if (!isValidLanguageTag(values.language.trim())) {
-    addError(
-      errors,
-      "language",
-      "Use a valid language tag such as en or zh-CN.",
-    );
   }
 
   if (values.mode === "crawl") {
@@ -185,12 +177,12 @@ export function buildCreateJobPayload(values: FormValues): CreateJobPayload {
     metadata: {
       title: values.title.trim(),
       author: values.author.trim(),
-      language: values.language.trim(),
       description: values.description.trim(),
     },
     options: {
       includeImages: values.includeImages,
       outputTarget: values.outputTarget,
+      useBrowser: values.useBrowser,
     },
   };
 
@@ -215,7 +207,10 @@ export function outputOptionSummary(values: FormValues): string {
     values.chapterStrategy === "source-order"
       ? "Chapters follow source page order."
       : "Readable content is kept together where possible.";
-  return `${imageSummary} ${chapterSummary} Output is EPUB download only.`;
+  const browserNote = values.useBrowser
+    ? " Browser rendering enabled."
+    : "";
+  return `${imageSummary} ${chapterSummary}${browserNote} Output is EPUB download only.`;
 }
 
 const fieldOrder: FormField[] = [
@@ -223,9 +218,9 @@ const fieldOrder: FormField[] = [
   "mode",
   "title",
   "author",
-  "language",
   "description",
   "includeImages",
+  "useBrowser",
   "chapterStrategy",
   "outputTarget",
   "crawlPrefixUrl",
@@ -290,24 +285,6 @@ function validateIntegerField(
   if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
     addError(errors, field, `${label} must be between ${min} and ${max}.`);
   }
-}
-
-function isValidLanguageTag(language: string): boolean {
-  const parts = language.split("-");
-  const [primary, ...rest] = parts;
-  if (
-    primary === undefined ||
-    primary.length < 2 ||
-    primary.length > 8 ||
-    !/^[A-Za-z]+$/.test(primary)
-  ) {
-    return false;
-  }
-
-  return rest.every(
-    (part) =>
-      part.length >= 1 && part.length <= 8 && /^[A-Za-z0-9]+$/.test(part),
-  );
 }
 
 function hostLooksUnsafe(hostname: string): boolean {

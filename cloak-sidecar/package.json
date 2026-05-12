@@ -1,0 +1,13 @@
+{
+  "name": "book-forge-cloak-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "cloakbrowser": "^0.3.28",
+    "playwright-core": "^1.53.0"
+  }
+}
