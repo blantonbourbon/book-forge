@@ -15,4 +15,4 @@ elif [ -f frontend/package.json ]; then
   npm install --prefix frontend
 fi
 
-"${CARGO_BIN}" fetch --locked
+go mod download

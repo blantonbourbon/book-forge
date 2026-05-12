@@ -27,10 +27,11 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          components: rustfmt, clippy
+          go-version: "1.25"
+          cache: true
 
       - name: Install dependencies
         run: npm run validate:install
@@ -49,6 +50,9 @@ jobs:
 
       - name: Build release artifacts
         run: npm run build
+
+      - name: Build Go binary
+        run: go build -v ./...
 
       - name: Audit production frontend dependencies
         run: npm audit --prefix frontend --omit=dev --audit-level=moderate

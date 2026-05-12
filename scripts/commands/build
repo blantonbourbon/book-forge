@@ -4,4 +4,4 @@ set -euo pipefail
 source "$(dirname "$0")/_env.sh"
 
 npm run build --prefix frontend
-"${CARGO_BIN}" build --workspace --release --locked
+go build -o /dev/null ./...

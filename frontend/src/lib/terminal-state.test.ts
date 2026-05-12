@@ -126,9 +126,7 @@ describe("submission and refresh recovery presentation", () => {
     expect(presentation.currentJobId).toBeNull();
     expect(presentation.download.available).toBe(false);
     expect(presentation.canSubmit).toBe(true);
-    expect(presentation.statusText).toContain(
-      "Refreshing this page never starts a conversion",
-    );
+    expect(presentation.statusText).toContain("Configure a source URL");
   });
 });
 
@@ -136,13 +134,12 @@ describe("WeRead export guidance state", () => {
   it("is manual EPUB import copy with a disabled action until an EPUB exists", () => {
     const waiting = wereadActionForDownload(null);
 
-    expect(WEREAD_GUIDANCE_COPY.body).toContain("download the `.epub`");
-    expect(WEREAD_GUIDANCE_COPY.body).toContain("import it manually");
+    expect(WEREAD_GUIDANCE_COPY.body).toContain("Import");
+    expect(WEREAD_GUIDANCE_COPY.body).toContain("WeRead");
     expect(waiting).toMatchObject({
       enabled: false,
       href: null,
       label: WEREAD_GUIDANCE_COPY.waitingActionLabel,
-      note: WEREAD_GUIDANCE_COPY.waitingNote,
     });
   });
 
@@ -153,7 +150,6 @@ describe("WeRead export guidance state", () => {
       enabled: true,
       href: "/api/jobs/current/download",
       label: WEREAD_GUIDANCE_COPY.readyActionLabel,
-      note: WEREAD_GUIDANCE_COPY.readyNote,
     });
   });
 });

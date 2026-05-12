@@ -3,5 +3,5 @@ set -euo pipefail
 
 source "$(dirname "$0")/_env.sh"
 
-"${CARGO_BIN}" test --workspace --locked -- --test-threads=10
+go test ./... -count=1
 npm test --prefix frontend --if-present -- --run

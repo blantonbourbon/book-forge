@@ -10,6 +10,6 @@
     "typecheck": "bash scripts/commands/typecheck",
     "test": "bash scripts/commands/test",
     "build": "bash scripts/commands/build",
-    "inspect:epub": "bash scripts/inspect-epub"
+    "inspect:epub": "go run ./cmd/inspect-epub"
   }
 }

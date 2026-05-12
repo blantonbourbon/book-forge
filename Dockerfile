@@ -5,12 +5,12 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM rust:1-bookworm AS backend-builder
+FROM golang:1.25-bookworm AS backend-builder
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ ./crates/
-COPY tools/ ./tools/
-RUN cargo build --release --locked -p book-forge-server --bin book-forge-server
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . ./
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/book-forge-server .
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -19,7 +19,7 @@ RUN apt-get update \
 
 RUN useradd --create-home --shell /usr/sbin/nologin bookforge
 WORKDIR /app
-COPY --from=backend-builder /app/target/release/book-forge-server /usr/local/bin/book-forge-server
+COPY --from=backend-builder /usr/local/bin/book-forge-server /usr/local/bin/book-forge-server
 COPY --from=frontend-builder /app/frontend/dist ./frontend
 RUN chown -R bookforge:bookforge /app
 

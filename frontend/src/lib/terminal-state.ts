@@ -50,15 +50,10 @@ export interface RefreshRecoveryPresentation {
 export const DOWNLOAD_LABEL = "Download EPUB";
 
 export const WEREAD_GUIDANCE_COPY = {
-  body: "Book Forge creates an EPUB file. After a job completes, download the `.epub` and import it manually in WeRead or another reader.",
-  boundary:
-    "Book Forge stays outside reader accounts and does not connect to third-party reading libraries.",
-  waitingActionLabel: "Complete a conversion to get an EPUB for manual import",
-  readyActionLabel: "Download EPUB for manual WeRead import",
-  waitingNote:
-    "The manual WeRead import step becomes available after a completed EPUB exists.",
-  readyNote:
-    "Use this EPUB download, then choose manual import in WeRead or another reader.",
+  downloadLabel: "Download EPUB",
+  body: "Import the EPUB into WeRead or any reader after download.",
+  waitingActionLabel: "Complete a conversion first",
+  readyActionLabel: "Download EPUB",
 } as const;
 
 export function downloadGateForJob(
@@ -162,8 +157,7 @@ export function refreshRecoveryPresentation(): RefreshRecoveryPresentation {
   const download = emptyDownloadGate();
   return {
     phase: "idle",
-    statusText:
-      "Ready to configure a conversion. Refreshing this page never starts a conversion by itself.",
+    statusText: "Configure a source URL to begin.",
     currentJobId: null,
     canSubmit: true,
     download,

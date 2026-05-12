@@ -23,27 +23,12 @@ const initialRecovery = refreshRecoveryPresentation();
     <link rel="stylesheet" href="/assets/book-forge.css" />
   </head>
   <body>
-    <a class="skip-link" href="#conversion-form">Skip to conversion form</a>
+    <a class="skip-link" href="#conversion-form">Skip to form</a>
     <header class="hero">
-      <div>
-        <p class="eyebrow">HTML to EPUB, safely bounded</p>
-        <h1>Book Forge</h1>
-        <p class="hero-copy">
-          Convert a single HTML page or a scoped same-site crawl into an EPUB
-          download for your reader. No account, credentials, or authentication
-          is required.
-        </p>
-      </div>
-      <div class="hero-card" aria-label="Default conversion settings">
-        <span>Default mode</span>
-        <strong>Single page</strong>
-        <span>Language</span>
-        <strong>{defaults.language}</strong>
-        <span>Crawl limits</span>
-        <strong>
-          depth {defaults.maxDepth}, pages {defaults.maxPages}
-        </strong>
-      </div>
+      <h1>Book Forge</h1>
+      <p class="hero-copy">
+        Convert web pages into EPUB downloads. No account needed.
+      </p>
     </header>
 
     <main>
@@ -52,16 +37,10 @@ const initialRecovery = refreshRecoveryPresentation();
           id="conversion-form"
           class="card conversion-form"
           novalidate
-          aria-describedby="form-help"
         >
           <div class="section-heading">
             <p class="eyebrow">Configure</p>
             <h2>Forge an EPUB</h2>
-            <p id="form-help">
-              Start with an HTTP or HTTPS source. Client-side validation catches
-              required fields, unsupported schemes, language tags, and crawl
-              limits before a job is started.
-            </p>
           </div>
 
           <div
@@ -81,15 +60,11 @@ const initialRecovery = refreshRecoveryPresentation();
               type="url"
               inputmode="url"
               autocomplete="url"
-              placeholder="https://example.test/single-page/index.html"
+              placeholder="https://example.test/page.html"
               value={defaults.sourceUrl}
               required
-              aria-describedby="source-url-help source-url-error"
+              aria-describedby="source-url-error"
             />
-            <p id="source-url-help" class="help">
-              HTTP and HTTPS URLs are accepted. Localhost, private, link-local,
-              and metadata targets are blocked.
-            </p>
             <p
               id="source-url-error"
               class="field-error"
@@ -99,7 +74,7 @@ const initialRecovery = refreshRecoveryPresentation();
           </div>
 
           <fieldset class="segmented-fieldset">
-            <legend>Conversion mode</legend>
+            <legend>Mode</legend>
             <div class="segmented-control">
               <label>
                 <input
@@ -110,7 +85,7 @@ const initialRecovery = refreshRecoveryPresentation();
                 />
                 <span>
                   <strong>Single page</strong>
-                  <small>One source page becomes one chapter.</small>
+                  <small>One source, one chapter.</small>
                 </span>
               </label>
               <label>
@@ -121,22 +96,18 @@ const initialRecovery = refreshRecoveryPresentation();
                   checked={defaults.mode === "crawl"}
                 />
                 <span>
-                  <strong>Crawl prefix</strong>
-                  <small>Scoped pages become ordered chapters.</small>
+                  <strong>Crawl</strong>
+                  <small>Scoped pages, ordered chapters.</small>
                 </span>
               </label>
             </div>
-            <p id="mode-note" class="help" aria-live="polite">
-              Single mode is active. Crawl-only settings are preserved while
-              hidden and do not affect this submission.
-            </p>
           </fieldset>
 
           <fieldset>
-            <legend>Book metadata</legend>
+            <legend>Metadata</legend>
             <div class="field-grid">
               <div class="field">
-                <label for="book-title">Book title</label>
+                <label for="book-title">Title</label>
                 <input
                   id="book-title"
                   name="title"
@@ -180,11 +151,9 @@ const initialRecovery = refreshRecoveryPresentation();
                   required
                   maxlength="32"
                   spellcheck="false"
-                  aria-describedby="book-language-help book-language-error"
+                  placeholder="en, zh-CN, en-US"
+                  aria-describedby="book-language-error"
                 />
-                <p id="book-language-help" class="help">
-                  Use a language tag such as en, zh-CN, or en-US.
-                </p>
                 <p
                   id="book-language-error"
                   class="field-error"
@@ -198,7 +167,7 @@ const initialRecovery = refreshRecoveryPresentation();
               <textarea
                 id="book-description"
                 name="description"
-                rows="4"
+                rows="3"
                 maxlength="512"
                 aria-describedby="book-description-error"
                 >{defaults.description}</textarea
@@ -213,7 +182,7 @@ const initialRecovery = refreshRecoveryPresentation();
           </fieldset>
 
           <fieldset>
-            <legend>Images, chapters, and output</legend>
+            <legend>Options</legend>
             <label class="checkbox-field">
               <input
                 id="include-images"
@@ -222,79 +191,64 @@ const initialRecovery = refreshRecoveryPresentation();
                 checked={defaults.includeImages}
               />
               <span>
-                <strong>Include safe images</strong>
-                <small
-                  >Embed reachable safe images and skip unsafe or failed
-                  resources.</small
-                >
+                <strong>Include images</strong>
+                <small>Embed reachable, safe images only.</small>
               </span>
             </label>
 
             <div class="field-grid">
               <div class="field">
-                <label for="chapter-strategy">Chapter organization</label>
+                <label for="chapter-strategy">Chapters</label>
                 <select id="chapter-strategy" name="chapterStrategy">
                   <option
                     value="source-order"
                     selected={defaults.chapterStrategy === "source-order"}
                   >
-                    Source order / one page per chapter
+                    Source order
                   </option>
                   <option
                     value="single-document"
                     selected={defaults.chapterStrategy === "single-document"}
                   >
-                    Keep readable content grouped
+                    Keep content grouped
                   </option>
                 </select>
               </div>
               <div class="field">
-                <label for="output-target">Output target</label>
+                <label for="output-target">Output</label>
                 <select id="output-target" name="outputTarget">
                   <option
                     value="epub"
                     selected={defaults.outputTarget === "epub"}
                   >
-                    EPUB download (.epub)
+                    EPUB (.epub)
                   </option>
                 </select>
-                <p class="help">
-                  Book Forge exports EPUB files only. WeRead use is manual EPUB
-                  import after download.
-                </p>
               </div>
             </div>
-            <p id="output-summary" class="help" aria-live="polite"></p>
           </fieldset>
 
           <section
             id="crawl-options"
             class="crawl-options"
             aria-labelledby="crawl-heading"
+            hidden
           >
             <div class="section-heading compact">
-              <p class="eyebrow">Crawl mode</p>
-              <h3 id="crawl-heading">Prefix and limits</h3>
-              <p>
-                Crawl mode follows eligible same-origin links under the prefix
-                while enforcing bounded depth and page limits.
-              </p>
+              <p class="eyebrow">Crawl</p>
+              <h3 id="crawl-heading">Scope</h3>
             </div>
             <div class="field">
-              <label for="crawl-prefix-url">Crawl prefix URL</label>
+              <label for="crawl-prefix-url">Prefix URL</label>
               <input
                 id="crawl-prefix-url"
                 name="crawlPrefixUrl"
                 type="url"
                 inputmode="url"
-                placeholder="https://example.test/crawl-graph/"
+                placeholder="https://example.test/docs/"
                 value={defaults.crawlPrefixUrl}
-                aria-describedby="crawl-prefix-help crawl-prefix-url-error"
+                aria-describedby="crawl-prefix-url-error"
               />
-              <p id="crawl-prefix-help" class="help">
-                Required in crawl mode. Must be HTTP or HTTPS and within the
-                source site.
-              </p>
               <p
                 id="crawl-prefix-url-error"
                 class="field-error"
@@ -304,7 +258,7 @@ const initialRecovery = refreshRecoveryPresentation();
             </div>
             <div class="field-grid">
               <div class="field">
-                <label for="max-depth">Maximum depth</label>
+                <label for="max-depth">Max depth</label>
                 <input
                   id="max-depth"
                   name="maxDepth"
@@ -314,12 +268,8 @@ const initialRecovery = refreshRecoveryPresentation();
                   max={MAX_CRAWL_DEPTH}
                   step="1"
                   value={defaults.maxDepth}
-                  aria-describedby="max-depth-help max-depth-error"
+                  aria-describedby="max-depth-error"
                 />
-                <p id="max-depth-help" class="help">
-                  Whole number from 0 to {MAX_CRAWL_DEPTH}. Zero converts only
-                  the start page.
-                </p>
                 <p
                   id="max-depth-error"
                   class="field-error"
@@ -328,7 +278,7 @@ const initialRecovery = refreshRecoveryPresentation();
                 </p>
               </div>
               <div class="field">
-                <label for="max-pages">Maximum pages</label>
+                <label for="max-pages">Max pages</label>
                 <input
                   id="max-pages"
                   name="maxPages"
@@ -338,11 +288,8 @@ const initialRecovery = refreshRecoveryPresentation();
                   max={MAX_CRAWL_PAGES}
                   step="1"
                   value={defaults.maxPages}
-                  aria-describedby="max-pages-help max-pages-error"
+                  aria-describedby="max-pages-error"
                 />
-                <p id="max-pages-help" class="help">
-                  Whole number from 1 to {MAX_CRAWL_PAGES}.
-                </p>
                 <p
                   id="max-pages-error"
                   class="field-error"
@@ -352,23 +299,16 @@ const initialRecovery = refreshRecoveryPresentation();
               </div>
             </div>
             <p class="help">
-              Runtime safety defaults: {
-                DEFAULT_MAX_TOTAL_BYTES.toLocaleString()
-              } bytes total and {DEFAULT_MAX_DURATION_MILLIS / 1000}s maximum
-              duration.
+              Bounded to {MAX_CRAWL_PAGES} pages at depth {MAX_CRAWL_DEPTH}, {DEFAULT_MAX_TOTAL_BYTES.toLocaleString()} bytes, {DEFAULT_MAX_DURATION_MILLIS / 1000}s.
             </p>
           </section>
 
           <div class="actions">
             <button id="submit-button" type="submit">Forge EPUB</button>
-            <p id="submit-hint" class="help">
-              Submit starts one job and disables duplicate submissions while
-              progress is active.
-            </p>
           </div>
         </form>
 
-        <aside class="side-stack" aria-label="Conversion status and guidance">
+        <aside class="side-stack" aria-label="Status">
           <section
             id="job-status"
             class="card status-card"
@@ -380,7 +320,7 @@ const initialRecovery = refreshRecoveryPresentation();
           >
             <div class="section-heading compact">
               <p class="eyebrow">Status</p>
-              <h2>Progress and download</h2>
+              <h2>Progress</h2>
             </div>
             <p id="status-text">{initialRecovery.statusText}</p>
             <div
@@ -398,11 +338,11 @@ const initialRecovery = refreshRecoveryPresentation();
             <dl id="job-summary" class="job-summary" hidden>
               <div>
                 <dt>Job</dt>
-                <dd id="summary-job">Not started</dd>
+                <dd id="summary-job"></dd>
               </div>
               <div>
                 <dt>Mode</dt>
-                <dd id="summary-mode">Single page</dd>
+                <dd id="summary-mode"></dd>
               </div>
               <div>
                 <dt>Title</dt>
@@ -410,7 +350,7 @@ const initialRecovery = refreshRecoveryPresentation();
               </div>
               <div>
                 <dt>Options</dt>
-                <dd id="summary-options">Default EPUB output</dd>
+                <dd id="summary-options"></dd>
               </div>
             </dl>
             <div id="warning-list" class="message-list warning-list" hidden>
@@ -423,25 +363,16 @@ const initialRecovery = refreshRecoveryPresentation();
             >
             </div>
             <a id="download-link" class="download-link" href="#" hidden>
-              Download EPUB
+              {WEREAD_GUIDANCE_COPY.downloadLabel}
             </a>
           </section>
 
-          <section id="weread-guidance" class="card guidance-card" tabindex="0">
-            <div class="section-heading compact">
-              <p class="eyebrow">WeRead</p>
-              <h2>EPUB export guidance</h2>
-            </div>
+          <section id="weread-guidance" class="card guidance-card">
             <p>{WEREAD_GUIDANCE_COPY.body}</p>
-            <p>{WEREAD_GUIDANCE_COPY.boundary}</p>
-            <p id="weread-action-note" class="help">
-              {WEREAD_GUIDANCE_COPY.waitingNote}
-            </p>
             <a
               id="weread-download-link"
               class="download-link weread-download-link"
               role="link"
-              aria-describedby="weread-action-note"
               aria-disabled="true"
               tabindex="0"
             >
@@ -466,7 +397,6 @@ const initialRecovery = refreshRecoveryPresentation();
         buildCreateJobPayload,
         canSubmitInPhase,
         cloneDefaultFormValues,
-        outputOptionSummary,
         validateForm,
         type FormField,
         type FormValues,
@@ -488,12 +418,8 @@ const initialRecovery = refreshRecoveryPresentation();
       );
       const submitButton =
         document.querySelector<HTMLButtonElement>("#submit-button");
-      const submitHint = document.querySelector<HTMLElement>("#submit-hint");
       const crawlOptions =
         document.querySelector<HTMLElement>("#crawl-options");
-      const modeNote = document.querySelector<HTMLElement>("#mode-note");
-      const outputSummary =
-        document.querySelector<HTMLElement>("#output-summary");
       const statusCard = document.querySelector<HTMLElement>("#job-status");
       const statusText = document.querySelector<HTMLElement>("#status-text");
       const progressWrap =
@@ -504,9 +430,6 @@ const initialRecovery = refreshRecoveryPresentation();
       const errorList = document.querySelector<HTMLElement>("#error-list");
       const downloadLink =
         document.querySelector<HTMLAnchorElement>("#download-link");
-      const wereadActionNote = document.querySelector<HTMLElement>(
-        "#weread-action-note",
-      );
       const wereadDownloadLink = document.querySelector<HTMLAnchorElement>(
         "#weread-download-link",
       );
@@ -558,7 +481,6 @@ const initialRecovery = refreshRecoveryPresentation();
 
         values = readFormValues();
         renderMode();
-        renderOutputSummary();
         renderSubmitState();
         renderWereadAction(wereadActionForDownload(null));
         form.addEventListener("input", handleFormInput);
@@ -578,7 +500,6 @@ const initialRecovery = refreshRecoveryPresentation();
           values = applyMode(values, values.mode);
         }
         renderMode();
-        renderOutputSummary();
         renderValidation(validateForm(values), false);
       }
 
@@ -608,8 +529,8 @@ const initialRecovery = refreshRecoveryPresentation();
         renderProgress(0, false);
         renderDownload(null);
         renderWereadAction(wereadActionForDownload(null));
-        renderSubmittedSummary("Starting…");
-        announce("Submitting conversion job…");
+        renderSubmittedSummary();
+        announce("Submitting…");
 
         try {
           const created = await createJob(buildCreateJobPayload(values));
@@ -668,7 +589,7 @@ const initialRecovery = refreshRecoveryPresentation();
         const presentation = jobPresentationForJob(job);
         const percent = clampProgress(job.progress?.percent ?? 0);
         renderProgress(percent, presentation.progressVisible);
-        renderSubmittedSummary(job.id);
+        renderSubmittedSummary();
         renderMessages(
           job.warnings ?? [],
           job.errors ?? [],
@@ -681,7 +602,7 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       function renderMode() {
-        if (!crawlOptions || !modeNote) {
+        if (!crawlOptions) {
           return;
         }
 
@@ -697,15 +618,6 @@ const initialRecovery = refreshRecoveryPresentation();
             control.disabled = !isCrawl;
             control.required = isCrawl;
           }
-        }
-        modeNote.textContent = isCrawl
-          ? "Crawl mode is active. Prefix, depth, and page-limit settings will be submitted."
-          : "Single mode is active. Crawl-only settings are preserved while hidden and do not affect this submission.";
-      }
-
-      function renderOutputSummary() {
-        if (outputSummary) {
-          outputSummary.textContent = outputOptionSummary(values);
         }
       }
 
@@ -759,7 +671,7 @@ const initialRecovery = refreshRecoveryPresentation();
         progressBar.style.width = `${percent}%`;
       }
 
-      function renderSubmittedSummary(jobId: string) {
+      function renderSubmittedSummary() {
         if (
           !jobSummary ||
           !summaryJob ||
@@ -770,11 +682,11 @@ const initialRecovery = refreshRecoveryPresentation();
           return;
         }
 
-        summaryJob.textContent = jobId;
+        summaryJob.textContent = currentJobId ?? "Starting…";
         summaryMode.textContent =
-          submittedValues.mode === "crawl" ? "Crawl prefix" : "Single page";
+          submittedValues.mode === "crawl" ? "Crawl" : "Single page";
         summaryTitle.textContent = submittedValues.title;
-        summaryOptions.textContent = outputOptionSummary(submittedValues);
+        summaryOptions.textContent = "EPUB";
         jobSummary.hidden = false;
       }
 
@@ -833,10 +745,6 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       function renderWereadAction(action: WeReadAction) {
-        if (wereadActionNote) {
-          wereadActionNote.textContent = action.note;
-        }
-
         if (!wereadDownloadLink) {
           return;
         }
@@ -857,7 +765,7 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       function renderSubmitState() {
-        if (!submitButton || !submitHint || !statusCard) {
+        if (!submitButton || !statusCard) {
           return;
         }
 
@@ -868,25 +776,15 @@ const initialRecovery = refreshRecoveryPresentation();
         statusCard.setAttribute("aria-busy", String(active));
 
         if (phase === "submitting") {
-          submitButton.textContent = "Starting job…";
-          submitHint.textContent =
-            "Submitting one job request. Duplicate submissions are disabled.";
+          submitButton.textContent = "Starting…";
         } else if (phase === "polling") {
-          submitButton.textContent = "Conversion running…";
-          submitHint.textContent =
-            "Progress is active. The submit button will re-enable at completion.";
+          submitButton.textContent = "Converting…";
         } else if (phase === "failed") {
-          submitButton.textContent = "Retry conversion";
-          submitHint.textContent =
-            "Fix inputs if needed, then retry without reloading.";
+          submitButton.textContent = "Retry";
         } else if (phase === "completed") {
-          submitButton.textContent = "Forge another EPUB";
-          submitHint.textContent =
-            "Completed. You can download the EPUB or start another conversion.";
+          submitButton.textContent = "Forge another";
         } else {
           submitButton.textContent = "Forge EPUB";
-          submitHint.textContent =
-            "Submit starts one job and disables duplicate submissions while progress is active.";
         }
       }
 
