@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+const maxJobRequestBytes = 1 << 20 // 1 MiB
 
 type HealthResponse struct {
 	Status string `json:"status"`
@@ -49,8 +52,18 @@ func handleCreateJob(state *AppState) gin.HandlerFunc {
 			return
 		}
 
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJobRequestBytes)
 		body, err := io.ReadAll(c.Request.Body)
-		if err != nil || len(body) == 0 {
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				RespondError(c, NewAPIError(http.StatusRequestEntityTooLarge, "request_too_large", "Job request body exceeded the configured limit."))
+				return
+			}
+			RespondError(c, ValidationError("Job creation requires a JSON request body.", []string{"body"}))
+			return
+		}
+		if len(body) == 0 {
 			RespondError(c, ValidationError("Job creation requires a JSON request body.", []string{"body"}))
 			return
 		}

@@ -159,25 +159,12 @@ func (f *SharedFetcher) fetchFixtureImpl(u *url.URL, maxBytes int) (*FetchedResp
 }
 
 func (f *SharedFetcher) fetchHTTP(u *url.URL, timeout time.Duration, maxBytes int) (*FetchedResponse, error) {
-	type result struct {
-		resp *FetchedResponse
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		resp, err := f.fetchHTTPImpl(u, maxBytes)
-		ch <- result{resp, err}
-	}()
-
-	select {
-	case r := <-ch:
-		return r.resp, r.err
-	case <-time.After(timeout):
-		return nil, NewFetchError("fetch_timeout", "Fetching source content timed out.")
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return f.fetchHTTPImpl(ctx, u, maxBytes)
 }
 
-func (f *SharedFetcher) fetchHTTPImpl(u *url.URL, maxBytes int) (*FetchedResponse, error) {
+func (f *SharedFetcher) fetchHTTPImpl(ctx context.Context, u *url.URL, maxBytes int) (*FetchedResponse, error) {
 	currentURL := *u
 
 	for redirectCount := 0; redirectCount <= maxRedirects; redirectCount++ {
@@ -198,7 +185,7 @@ func (f *SharedFetcher) fetchHTTPImpl(u *url.URL, maxBytes int) (*FetchedRespons
 			}
 		}
 
-		req, err := http.NewRequest("GET", currentURL.String(), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL.String(), nil)
 		if err != nil {
 			return nil, NewFetchError("fetch_failed", "Source content could not be fetched.")
 		}
@@ -211,6 +198,9 @@ func (f *SharedFetcher) fetchHTTPImpl(u *url.URL, maxBytes int) (*FetchedRespons
 
 		resp, err := client.Do(req)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				return nil, NewFetchError("fetch_timeout", "Fetching source content timed out.")
+			}
 			return nil, NewFetchError("fetch_failed", "Source content could not be fetched.")
 		}
 
@@ -255,6 +245,9 @@ func (f *SharedFetcher) fetchHTTPImpl(u *url.URL, maxBytes int) (*FetchedRespons
 		body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes+1)))
 		resp.Body.Close()
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				return nil, NewFetchError("fetch_timeout", "Fetching source content timed out.")
+			}
 			return nil, NewFetchError("fetch_failed", "Source body could not be read.")
 		}
 		if len(body) > maxBytes {

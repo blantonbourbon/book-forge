@@ -19,6 +19,8 @@ const (
 	maxCrawlPages         = 100
 	maxTotalBytes         = 20 * 1024 * 1024
 	maxDurationMillis     = 120000
+	jobRetention          = 1 * time.Hour
+	jobSweepInterval      = 1 * time.Minute
 )
 
 type AppState struct {
@@ -41,8 +43,33 @@ type JobManager struct {
 }
 
 func NewJobManager() *JobManager {
-	return &JobManager{
+	m := &JobManager{
 		jobs: make(map[uuid.UUID]*JobRecord),
+	}
+	go m.sweepLoop()
+	return m
+}
+
+func (m *JobManager) sweepLoop() {
+	ticker := time.NewTicker(jobSweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.sweep(time.Now())
+	}
+}
+
+func (m *JobManager) sweep(now time.Time) {
+	cutoff := now.Add(-jobRetention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, rec := range m.jobs {
+		if rec.Status != StatusCompleted && rec.Status != StatusFailed {
+			continue
+		}
+		if rec.CompletedAt.IsZero() || rec.CompletedAt.After(cutoff) {
+			continue
+		}
+		delete(m.jobs, id)
 	}
 }
 
@@ -146,13 +173,14 @@ type Artifact struct {
 }
 
 type JobRecord struct {
-	ID       uuid.UUID
-	Status   JobStatus
-	Summary  JobSummary
-	Progress JobProgress
-	Warnings []converter.ConversionWarning
-	Errors   []ErrorBody
-	Artifact *Artifact
+	ID          uuid.UUID
+	Status      JobStatus
+	Summary     JobSummary
+	Progress    JobProgress
+	Warnings    []converter.ConversionWarning
+	Errors      []ErrorBody
+	Artifact    *Artifact
+	CompletedAt time.Time
 }
 
 func queuedProgress(summary *JobSummary) JobProgress {
@@ -222,8 +250,8 @@ func (m *JobManager) CreateJob(fetcher *SharedFetcher, browserFetcher *BrowserFe
 
 func (m *JobManager) GetResponse(id uuid.UUID) (*JobResponse, error) {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	record, ok := m.jobs[id]
-	m.mu.RUnlock()
 	if !ok {
 		return nil, &APIError{Status: 404, Body: ErrorBody{Code: "job_not_found", Message: "The requested job was not found."}}
 	}
@@ -233,8 +261,8 @@ func (m *JobManager) GetResponse(id uuid.UUID) (*JobResponse, error) {
 
 func (m *JobManager) Artifact(id uuid.UUID) (JobStatus, *Artifact) {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	record, ok := m.jobs[id]
-	m.mu.RUnlock()
 	if !ok {
 		return "", nil
 	}
@@ -296,6 +324,7 @@ func (m *JobManager) markCompleted(id uuid.UUID, result *converter.ConversionRes
 			Filename: result.DownloadFilename,
 			Bytes:    result.EPUBBytes,
 		}
+		record.CompletedAt = time.Now()
 	}
 }
 
@@ -307,6 +336,7 @@ func (m *JobManager) markFailed(id uuid.UUID, errBody ErrorBody, progress JobPro
 		record.Progress = progress.Failed()
 		record.Errors = []ErrorBody{errBody}
 		record.Artifact = nil
+		record.CompletedAt = time.Now()
 	}
 }
 
@@ -428,42 +458,42 @@ func crawlFromRequest(crawl *APICrawlOptions, sourceURL *url.URL, fields *[]stri
 		*fields = append(*fields, "crawl.prefixUrl")
 	}
 
-	maxDepth := 3
+	depth := 3
 	if crawl != nil && crawl.MaxDepth != nil {
-		maxDepth = *crawl.MaxDepth
+		depth = *crawl.MaxDepth
 	}
-	maxPages := 50
+	pages := 50
 	if crawl != nil && crawl.MaxPages != nil {
-		maxPages = *crawl.MaxPages
+		pages = *crawl.MaxPages
 	}
-	maxTotalBytes := defaultMaxTotalBytes
+	totalBytes := defaultMaxTotalBytes
 	if crawl != nil && crawl.MaxTotalBytes != nil {
-		maxTotalBytes = *crawl.MaxTotalBytes
+		totalBytes = *crawl.MaxTotalBytes
 	}
-	maxDurationMillis := int64(defaultFetchTimeoutMs)
+	durationMillis := int64(defaultFetchTimeoutMs)
 	if crawl != nil && crawl.MaxDurationMillis != nil {
-		maxDurationMillis = *crawl.MaxDurationMillis
+		durationMillis = *crawl.MaxDurationMillis
 	}
 
-	if maxDepth > maxCrawlDepth {
+	if depth > maxCrawlDepth {
 		*fields = append(*fields, "crawl.maxDepth")
 	}
-	if maxPages == 0 || maxPages > maxCrawlPages {
+	if pages == 0 || pages > maxCrawlPages {
 		*fields = append(*fields, "crawl.maxPages")
 	}
-	if maxTotalBytes == 0 || maxTotalBytes > maxTotalBytes {
+	if totalBytes == 0 || totalBytes > maxTotalBytes {
 		*fields = append(*fields, "crawl.maxTotalBytes")
 	}
-	if maxDurationMillis <= 0 || maxDurationMillis > maxDurationMillis {
+	if durationMillis <= 0 || durationMillis > int64(maxDurationMillis) {
 		*fields = append(*fields, "crawl.maxDurationMillis")
 	}
 
 	return &CrawlSummary{
 		PrefixURL:         prefixURL,
-		MaxDepth:          maxDepth,
-		MaxPages:          maxPages,
-		MaxTotalBytes:     maxTotalBytes,
-		MaxDurationMillis: maxDurationMillis,
+		MaxDepth:          depth,
+		MaxPages:          pages,
+		MaxTotalBytes:     totalBytes,
+		MaxDurationMillis: durationMillis,
 	}
 }
 
