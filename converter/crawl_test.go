@@ -83,3 +83,49 @@ func TestResolvePageLinkHandlesRelativeURLs(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectImageResourcesSuppressesTimeLimitWarning(t *testing.T) {
+	page, err := url.Parse("https://example.com/articles/post.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	timeLimit := CrawlTimeLimitFailure
+	fetchErr := "fetch_timeout: read tcp ..."
+
+	lookup := map[string]*resourceSource{
+		"https://example.com/articles/skipped.png": {
+			mediaType: "application/octet-stream",
+			failure:   &timeLimit,
+		},
+		"https://example.com/articles/failed.png": {
+			mediaType: "application/octet-stream",
+			failure:   &fetchErr,
+		},
+	}
+
+	imageSources := []ImageSource{{
+		URL:    page,
+		Images: []string{"skipped.png", "failed.png", "missing.png"},
+	}}
+
+	var warnings []ConversionWarning
+	warningKeys := make(map[string]bool)
+	resources, paths := collectImageResources(imageSources, lookup, &warnings, warningKeys)
+
+	if len(resources) != 0 {
+		t.Fatalf("expected no packaged resources (all failed), got %d", len(resources))
+	}
+	if len(paths) != 0 {
+		t.Fatalf("expected no packaged paths, got %d", len(paths))
+	}
+
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings (failed.png + missing.png), got %d: %+v", len(warnings), warnings)
+	}
+	for _, w := range warnings {
+		if w.Affected != nil && *w.Affected == "https://example.com/articles/skipped.png" {
+			t.Fatalf("did not expect a warning for the time-limit-skipped image, got %+v", w)
+		}
+	}
+}

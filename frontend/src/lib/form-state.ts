@@ -55,7 +55,7 @@ export interface ValidationResult {
 }
 
 export const DEFAULT_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
-export const DEFAULT_MAX_DURATION_MILLIS = 30_000;
+export const DEFAULT_MAX_DURATION_MILLIS = 90_000;
 export const MAX_CRAWL_DEPTH = 10;
 export const MAX_CRAWL_PAGES = 100;
 

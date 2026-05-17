@@ -18,7 +18,7 @@ const (
 	maxCrawlDepth         = 10
 	maxCrawlPages         = 100
 	maxTotalBytes         = 20 * 1024 * 1024
-	maxDurationMillis     = 120000
+	maxDurationMillis     = 180000
 	jobRetention          = 1 * time.Hour
 	jobSweepInterval      = 1 * time.Minute
 )
@@ -664,14 +664,19 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 		progress.PagesFetched++
 		progress.Percent = 30 + (progress.PagesFetched*50)/max(crawl.MaxPages, 1)
 
+		baseURL, err := url.Parse(fetched.FinalURL)
+		if err != nil || baseURL == nil {
+			baseURL = pageURL
+		}
+
 		pages = append(pages, converter.CrawlPage{
 			URL:  fetched.FinalURL,
 			HTML: &html,
 		})
 
 		if summary.Options.IncludeImages {
-			imageURLs := ExtractImageURLs(html, pageURL)
-			for _, imgURL := range imageURLs {
+			imageURLs := ExtractImageURLs(html, baseURL)
+			for i, imgURL := range imageURLs {
 				if imgURL.Scheme != "http" && imgURL.Scheme != "https" {
 					continue
 				}
@@ -698,6 +703,21 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 				}
 				if time.Now().After(deadline) {
 					crawlTimeLimitReached = true
+					for _, remaining := range imageURLs[i+1:] {
+						if remaining.Scheme != "http" && remaining.Scheme != "https" {
+							continue
+						}
+						rkey := remaining.String()
+						if seenResources[rkey] {
+							continue
+						}
+						seenResources[rkey] = true
+						resources = append(resources, converter.CrawlResource{
+							URL:       rkey,
+							MediaType: "application/octet-stream",
+							Failure:   strPtr(converter.CrawlTimeLimitFailure),
+						})
+					}
 					break
 				}
 			}
@@ -709,7 +729,7 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 			break
 		}
 
-		for _, linkURL := range ExtractLinkURLs(html, pageURL) {
+		for _, linkURL := range ExtractLinkURLs(html, baseURL) {
 			if !isInCrawlScopeServer(linkURL, sourceURL, crawl.PrefixURL) {
 				continue
 			}

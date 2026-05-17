@@ -201,7 +201,7 @@ describe("conversion form payloads and state helpers", () => {
         maxDepth: 2,
         maxPages: 7,
         maxTotalBytes: 10485760,
-        maxDurationMillis: 30000,
+        maxDurationMillis: 90000,
       },
     });
   });

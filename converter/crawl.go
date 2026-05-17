@@ -277,6 +277,9 @@ func collectImageResources(
 			}
 
 			if source.failure != nil {
+				if *source.failure == CrawlTimeLimitFailure {
+					continue
+				}
 				pushWarningOnce(warnings, warningKeys, "image_fetch_failed", "Image was skipped: "+safeWarningDetail(*source.failure), strPtr(affected))
 				continue
 			}
