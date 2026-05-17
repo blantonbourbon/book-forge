@@ -207,9 +207,7 @@ export function outputOptionSummary(values: FormValues): string {
     values.chapterStrategy === "source-order"
       ? "Chapters follow source page order."
       : "Readable content is kept together where possible.";
-  const browserNote = values.useBrowser
-    ? " Browser rendering enabled."
-    : "";
+  const browserNote = values.useBrowser ? " Browser rendering enabled." : "";
   return `${imageSummary} ${chapterSummary}${browserNote} Output is EPUB download only.`;
 }
 

@@ -54,6 +54,8 @@ export const WEREAD_GUIDANCE_COPY = {
   body: "Import the EPUB into WeRead or any reader after download.",
   waitingActionLabel: "Complete a conversion first",
   readyActionLabel: "Download EPUB",
+  waitingNote: "Import the EPUB into WeRead or any reader after download.",
+  readyNote: "Import the EPUB into WeRead or any reader after download.",
 } as const;
 
 export function downloadGateForJob(

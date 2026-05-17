@@ -1,14 +1,14 @@
 /* ── Font ── */
 @font-face {
-  font-family: 'Zed Sans';
-  src: url('/assets/fonts/zed-sans-400.woff2') format('woff2');
+  font-family: "Zed Sans";
+  src: url("/assets/fonts/zed-sans-400.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Zed Sans';
-  src: url('/assets/fonts/zed-sans-700.woff2') format('woff2');
+  font-family: "Zed Sans";
+  src: url("/assets/fonts/zed-sans-700.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -40,19 +40,41 @@
 /* ── Reset ── */
 body {
   margin: 0;
-  font-family: 'Zed Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    "Zed Sans",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   color: var(--text);
   background: var(--bg);
 }
 
-* { box-sizing: border-box; }
-[hidden] { display: none !important; }
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
 
-a { color: var(--accent); }
+a {
+  color: var(--accent);
+}
 
-button, input, select, textarea { font: inherit; }
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
 
-button, input, select, textarea, a, [tabindex] {
+button,
+input,
+select,
+textarea,
+a,
+[tabindex] {
   outline-offset: 0.2rem;
 }
 
@@ -79,7 +101,9 @@ a:focus-visible,
   text-decoration: none;
 }
 
-.skip-link:focus { transform: translateY(0); }
+.skip-link:focus {
+  transform: translateY(0);
+}
 
 /* ── Layout ── */
 .hero,
@@ -108,7 +132,9 @@ main {
   line-height: 1.55;
 }
 
-main { padding: 0 0 4rem; }
+main {
+  padding: 0 0 4rem;
+}
 
 .app-grid {
   display: grid;
@@ -214,10 +240,14 @@ textarea {
   background: var(--surface);
   color: var(--text);
   padding: 0.7rem 0.85rem;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
-textarea { resize: vertical; }
+textarea {
+  resize: vertical;
+}
 
 input:hover,
 select:hover,
@@ -277,7 +307,9 @@ textarea[aria-invalid="true"] {
   background: var(--surface-alt);
   padding: 0.8rem;
   cursor: pointer;
-  transition: border-color 150ms ease, background 150ms ease;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
 }
 
 .segmented-control label:has(input:checked) {
@@ -385,7 +417,9 @@ button,
   text-decoration: none;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: background 150ms ease, box-shadow 150ms ease;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
 }
 
 button:hover:not(:disabled),
@@ -494,7 +528,9 @@ button:disabled,
 
 /* ── Responsive ── */
 @media (max-width: 860px) {
-  .hero { padding-top: 2.5rem; }
+  .hero {
+    padding-top: 2.5rem;
+  }
 
   .app-grid {
     grid-template-columns: 1fr;
