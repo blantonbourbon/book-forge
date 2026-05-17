@@ -371,10 +371,7 @@ func resolvePageLink(rawHref string, sourceURL *url.URL) *url.URL {
 		return nil
 	}
 
-	resolved, err := url.Parse(href)
-	if err != nil {
-		resolved, err = sourceURL.Parse(href)
-	}
+	resolved, err := sourceURL.Parse(href)
 	if err != nil {
 		return nil
 	}
@@ -390,10 +387,7 @@ func resolveImageSrc(rawSrc string, sourceURL *url.URL) (*url.URL, error) {
 		return nil, &ConversionError{Code: "invalid", Message: src}
 	}
 
-	resolved, err := url.Parse(src)
-	if err != nil {
-		resolved, err = sourceURL.Parse(src)
-	}
+	resolved, err := sourceURL.Parse(src)
 	if err != nil {
 		return nil, &ConversionError{Code: "invalid", Message: src}
 	}

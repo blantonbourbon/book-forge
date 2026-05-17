@@ -370,10 +370,7 @@ func extractURLs(htmlContent string, base *url.URL, selector, attr string) []*ur
 		if !exists || val == "" || containsControlChar(val) {
 			return
 		}
-		u, err := url.Parse(val)
-		if err != nil {
-			u, err = base.Parse(val)
-		}
+		u, err := base.Parse(val)
 		if err == nil {
 			urls = append(urls, u)
 		}

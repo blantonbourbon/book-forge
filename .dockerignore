@@ -5,6 +5,7 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.astro/
+cloak-sidecar/node_modules/
 .env
 .env.*
 *.log

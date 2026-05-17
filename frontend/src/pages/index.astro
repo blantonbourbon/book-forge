@@ -7,7 +7,7 @@ import {
   MAX_CRAWL_PAGES,
 } from "../lib/form-state";
 import {
-  WEREAD_GUIDANCE_COPY,
+  READER_GUIDANCE_COPY,
   refreshRecoveryPresentation,
 } from "../lib/terminal-state";
 
@@ -394,21 +394,12 @@ const initialRecovery = refreshRecoveryPresentation();
             >
             </div>
             <a id="download-link" class="download-link" href="#" hidden>
-              {WEREAD_GUIDANCE_COPY.downloadLabel}
+              {READER_GUIDANCE_COPY.downloadLabel}
             </a>
           </section>
 
-          <section id="weread-guidance" class="card guidance-card">
-            <p>{WEREAD_GUIDANCE_COPY.body}</p>
-            <a
-              id="weread-download-link"
-              class="download-link weread-download-link"
-              role="link"
-              aria-disabled="true"
-              tabindex="0"
-            >
-              {WEREAD_GUIDANCE_COPY.waitingActionLabel}
-            </a>
+          <section id="reader-guidance" class="card guidance-card">
+            <p>{READER_GUIDANCE_COPY.body}</p>
           </section>
         </aside>
       </section>
@@ -441,8 +432,6 @@ const initialRecovery = refreshRecoveryPresentation();
         pollingFailurePresentation,
         preStartFailurePresentation,
         statusMessageDisplayText,
-        wereadActionForDownload,
-        type WeReadAction,
       } from "../lib/terminal-state";
 
       const form = document.querySelector<HTMLFormElement>("#conversion-form");
@@ -467,9 +456,6 @@ const initialRecovery = refreshRecoveryPresentation();
       const errorList = document.querySelector<HTMLElement>("#error-list");
       const downloadLink =
         document.querySelector<HTMLAnchorElement>("#download-link");
-      const wereadDownloadLink = document.querySelector<HTMLAnchorElement>(
-        "#weread-download-link",
-      );
 
       const summaryJob = document.querySelector<HTMLElement>("#summary-job");
       const summaryMode = document.querySelector<HTMLElement>("#summary-mode");
@@ -523,17 +509,11 @@ const initialRecovery = refreshRecoveryPresentation();
         values = readFormValues();
         renderMode();
         renderSubmitState();
-        renderWereadAction(wereadActionForDownload(null));
         form.addEventListener("input", handleFormInput);
         form.addEventListener("change", handleFormInput);
         form.addEventListener("submit", handleSubmit);
         fieldControls.sourceUrl?.addEventListener("blur", () => {
           void maybePreviewMetadata();
-        });
-        wereadDownloadLink?.addEventListener("click", (event) => {
-          if (wereadDownloadLink.getAttribute("aria-disabled") === "true") {
-            event.preventDefault();
-          }
         });
       }
 
@@ -673,7 +653,6 @@ const initialRecovery = refreshRecoveryPresentation();
         renderMessages([], []);
         renderProgress(0, false);
         renderDownload(null);
-        renderWereadAction(wereadActionForDownload(null));
         renderSubmittedSummary();
         announce("Submitting…");
 
@@ -696,7 +675,6 @@ const initialRecovery = refreshRecoveryPresentation();
           renderProgress(0, presentation.progressVisible);
           renderMessages([], presentation.errors);
           renderDownload(presentation.download.href);
-          renderWereadAction(presentation.weread);
           announce(presentation.statusText);
         }
       }
@@ -721,7 +699,6 @@ const initialRecovery = refreshRecoveryPresentation();
             renderProgress(0, presentation.progressVisible);
             renderMessages([], presentation.errors);
             renderDownload(presentation.download.href);
-            renderWereadAction(presentation.weread);
             announce(presentation.statusText);
           }
         };
@@ -742,7 +719,6 @@ const initialRecovery = refreshRecoveryPresentation();
           presentation.errorHeading,
         );
         renderDownload(presentation.download.href);
-        renderWereadAction(presentation.weread);
         announce(presentation.statusText);
       }
 
@@ -887,26 +863,6 @@ const initialRecovery = refreshRecoveryPresentation();
         downloadLink.href = url;
         downloadLink.hidden = false;
         downloadLink.setAttribute("aria-disabled", "false");
-      }
-
-      function renderWereadAction(action: WeReadAction) {
-        if (!wereadDownloadLink) {
-          return;
-        }
-
-        wereadDownloadLink.textContent = action.label;
-        wereadDownloadLink.setAttribute(
-          "aria-disabled",
-          String(!action.enabled),
-        );
-        wereadDownloadLink.tabIndex = 0;
-
-        if (action.enabled && action.href) {
-          wereadDownloadLink.href = action.href;
-          return;
-        }
-
-        wereadDownloadLink.removeAttribute("href");
       }
 
       function renderSubmitState() {

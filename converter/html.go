@@ -417,18 +417,6 @@ func makeSafeHref(rawHref string, sourceURL *url.URL, ids map[string]bool, linkR
 }
 
 func safeCrawlHref(href string, sourceURL *url.URL, ids map[string]bool, rewrites *LinkRewriteContext) string {
-	u, err := url.Parse(href)
-	if err == nil {
-		switch u.Scheme {
-		case "http", "https":
-			return rewriteHTTPHref(u, sourceURL, ids, rewrites)
-		case "mailto":
-			return href
-		default:
-			return ""
-		}
-	}
-
 	resolved, err := sourceURL.Parse(href)
 	if err != nil {
 		return ""
@@ -436,6 +424,8 @@ func safeCrawlHref(href string, sourceURL *url.URL, ids map[string]bool, rewrite
 	switch resolved.Scheme {
 	case "http", "https":
 		return rewriteHTTPHref(resolved, sourceURL, ids, rewrites)
+	case "mailto":
+		return resolved.String()
 	default:
 		return ""
 	}
@@ -482,10 +472,7 @@ func makeSafeImageSrc(rawSrc string, sourceURL *url.URL, imageRewrites *ImageRew
 		return ""
 	}
 
-	resolved, err := url.Parse(src)
-	if err != nil {
-		resolved, err = sourceURL.Parse(src)
-	}
+	resolved, err := sourceURL.Parse(src)
 	if err != nil {
 		return ""
 	}

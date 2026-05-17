@@ -2,14 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { ApiErrorBody, JobResponse } from "./api";
 import {
-  WEREAD_GUIDANCE_COPY,
+  READER_GUIDANCE_COPY,
   downloadGateForJob,
   jobPresentationForJob,
   pollingFailurePresentation,
   preStartFailurePresentation,
   refreshRecoveryPresentation,
   statusMessageDisplayText,
-  wereadActionForDownload,
 } from "./terminal-state";
 
 describe("terminal job presentation", () => {
@@ -36,7 +35,6 @@ describe("terminal job presentation", () => {
       available: true,
       href: "http://127.0.0.1:3100/api/jobs/job-with-warnings/download",
     });
-    expect(presentation.weread.enabled).toBe(true);
     expect(presentation.canStartAnother).toBe(true);
     expect(statusMessageDisplayText(job.warnings[0])).toBe(
       "image_fetch_failed: Image was skipped because it could not be fetched. (https://example.test/missing.png)",
@@ -76,7 +74,6 @@ describe("terminal job presentation", () => {
         href: null,
       },
     });
-    expect(jobPresentationForJob(failed).weread.enabled).toBe(false);
   });
 });
 
@@ -98,8 +95,6 @@ describe("submission and refresh recovery presentation", () => {
     expect(presentation.canSubmit).toBe(true);
     expect(presentation.download.available).toBe(false);
     expect(presentation.download.href).toBeNull();
-    expect(presentation.weread.enabled).toBe(false);
-    expect(presentation.weread.href).toBeNull();
   });
 
   it("treats polling refresh failures as recoverable failed states", () => {
@@ -130,27 +125,10 @@ describe("submission and refresh recovery presentation", () => {
   });
 });
 
-describe("WeRead export guidance state", () => {
-  it("is manual EPUB import copy with a disabled action until an EPUB exists", () => {
-    const waiting = wereadActionForDownload(null);
-
-    expect(WEREAD_GUIDANCE_COPY.body).toContain("Import");
-    expect(WEREAD_GUIDANCE_COPY.body).toContain("WeRead");
-    expect(waiting).toMatchObject({
-      enabled: false,
-      href: null,
-      label: WEREAD_GUIDANCE_COPY.waitingActionLabel,
-    });
-  });
-
-  it("enables only the current completed EPUB download for manual import", () => {
-    const ready = wereadActionForDownload("/api/jobs/current/download");
-
-    expect(ready).toMatchObject({
-      enabled: true,
-      href: "/api/jobs/current/download",
-      label: WEREAD_GUIDANCE_COPY.readyActionLabel,
-    });
+describe("reader guidance copy", () => {
+  it("mentions WeRead and uses the canonical download label", () => {
+    expect(READER_GUIDANCE_COPY.body).toContain("WeRead");
+    expect(READER_GUIDANCE_COPY.downloadLabel).toBe("Download EPUB");
   });
 });
 

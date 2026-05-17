@@ -8,13 +8,6 @@ export interface DownloadGate {
   unavailableReason: string;
 }
 
-export interface WeReadAction {
-  enabled: boolean;
-  href: string | null;
-  label: string;
-  note: string;
-}
-
 export interface JobPresentation {
   phase: UiPhase;
   statusText: string;
@@ -24,7 +17,6 @@ export interface JobPresentation {
   canStartAnother: boolean;
   canSubmit: boolean;
   download: DownloadGate;
-  weread: WeReadAction;
 }
 
 export interface FailurePresentation {
@@ -35,7 +27,6 @@ export interface FailurePresentation {
   canEditForm: boolean;
   canSubmit: boolean;
   download: DownloadGate;
-  weread: WeReadAction;
 }
 
 export interface RefreshRecoveryPresentation {
@@ -44,18 +35,13 @@ export interface RefreshRecoveryPresentation {
   currentJobId: null;
   canSubmit: boolean;
   download: DownloadGate;
-  weread: WeReadAction;
 }
 
 export const DOWNLOAD_LABEL = "Download EPUB";
 
-export const WEREAD_GUIDANCE_COPY = {
-  downloadLabel: "Download EPUB",
+export const READER_GUIDANCE_COPY = {
+  downloadLabel: DOWNLOAD_LABEL,
   body: "Import the EPUB into WeRead or any reader after download.",
-  waitingActionLabel: "Complete a conversion first",
-  readyActionLabel: "Download EPUB",
-  waitingNote: "Import the EPUB into WeRead or any reader after download.",
-  readyNote: "Import the EPUB into WeRead or any reader after download.",
 } as const;
 
 export function downloadGateForJob(
@@ -69,24 +55,6 @@ export function downloadGateForJob(
     label: DOWNLOAD_LABEL,
     unavailableReason:
       "An EPUB download is available only for the current completed job.",
-  };
-}
-
-export function wereadActionForDownload(href: string | null): WeReadAction {
-  if (!href) {
-    return {
-      enabled: false,
-      href: null,
-      label: WEREAD_GUIDANCE_COPY.waitingActionLabel,
-      note: WEREAD_GUIDANCE_COPY.waitingNote,
-    };
-  }
-
-  return {
-    enabled: true,
-    href,
-    label: WEREAD_GUIDANCE_COPY.readyActionLabel,
-    note: WEREAD_GUIDANCE_COPY.readyNote,
   };
 }
 
@@ -119,14 +87,12 @@ export function jobPresentationForJob(
     canStartAnother: phase === "completed" || phase === "failed",
     canSubmit: canSubmitInPhase(phase),
     download,
-    weread: wereadActionForDownload(download.href),
   };
 }
 
 export function preStartFailurePresentation(
   error: ApiErrorBody,
 ): FailurePresentation {
-  const download = emptyDownloadGate();
   return {
     phase: "failed",
     statusText: `Job was not started: ${error.message}`,
@@ -134,15 +100,13 @@ export function preStartFailurePresentation(
     errors: [error],
     canEditForm: true,
     canSubmit: true,
-    download,
-    weread: wereadActionForDownload(download.href),
+    download: emptyDownloadGate(),
   };
 }
 
 export function pollingFailurePresentation(
   error: ApiErrorBody,
 ): FailurePresentation {
-  const download = emptyDownloadGate();
   return {
     phase: "failed",
     statusText: `Progress could not be refreshed: ${error.message}`,
@@ -150,20 +114,17 @@ export function pollingFailurePresentation(
     errors: [error],
     canEditForm: true,
     canSubmit: true,
-    download,
-    weread: wereadActionForDownload(download.href),
+    download: emptyDownloadGate(),
   };
 }
 
 export function refreshRecoveryPresentation(): RefreshRecoveryPresentation {
-  const download = emptyDownloadGate();
   return {
     phase: "idle",
     statusText: "Configure a source URL to begin.",
     currentJobId: null,
     canSubmit: true,
-    download,
-    weread: wereadActionForDownload(download.href),
+    download: emptyDownloadGate(),
   };
 }
 
