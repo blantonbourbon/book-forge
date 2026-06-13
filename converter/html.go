@@ -9,9 +9,10 @@ import (
 )
 
 type Chapter struct {
-	Title    string
-	XHTML    string
-	Warnings []ConversionWarning
+	Title          string
+	XHTML          string
+	NavigationPath []string
+	Warnings       []ConversionWarning
 }
 
 type ChapterAnalysis struct {

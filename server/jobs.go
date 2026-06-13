@@ -620,14 +620,24 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 			progress.CurrentDepth = depth
 		}
 
+		remainingBytes := crawl.MaxTotalBytes - progress.BytesFetched
+		if remainingBytes <= 0 {
+			pages = append(pages, converter.CrawlPage{
+				URL:     pageURL.String(),
+				Failure: strPtr(converter.CrawlByteLimitFailure),
+			})
+			progress.PagesSkipped++
+			continue
+		}
+
 		var pageFetchErr error
 		var fetched *FetchedResponse
 		if summary.Options.UseBrowser && browserFetcher == nil {
 			pageFetchErr = NewFetchError("browser_unavailable", "Browser rendering is not configured on this server.")
 		} else if summary.Options.UseBrowser {
-			fetched, pageFetchErr = fetchHTMLBrowser(browserFetcher, pageURL.String(), remaining, crawl.MaxTotalBytes)
+			fetched, pageFetchErr = fetchHTMLBrowser(browserFetcher, pageURL.String(), remaining, remainingBytes)
 		} else {
-			fetched, pageFetchErr = fetchHTML(fetcher, pageURL.String(), remaining, crawl.MaxTotalBytes)
+			fetched, pageFetchErr = fetchHTML(fetcher, pageURL.String(), remaining, remainingBytes)
 		}
 		if pageFetchErr != nil {
 			if depth == 0 {
@@ -636,7 +646,7 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 			progress.PagesSkipped++
 			pages = append(pages, converter.CrawlPage{
 				URL:     pageURL.String(),
-				Failure: strPtr(pageFetchErr.Error()),
+				Failure: strPtr(crawlFailureForFetchError(pageFetchErr, remainingBytes, crawl.MaxTotalBytes)),
 			})
 			if time.Now().After(deadline) {
 				crawlTimeLimitReached = true
@@ -653,7 +663,7 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 		if progress.BytesFetched+pageBytes > crawl.MaxTotalBytes {
 			pages = append(pages, converter.CrawlPage{
 				URL:     pageURL.String(),
-				Failure: strPtr("crawl byte limit reached"),
+				Failure: strPtr(converter.CrawlByteLimitFailure),
 			})
 			progress.PagesSkipped++
 			continue
@@ -686,12 +696,28 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 				}
 				seenResources[key] = true
 
-				res, err := fetcher.Fetch(imgURL.String(), deadline.Sub(time.Now()), crawl.MaxTotalBytes)
+				remainingBytes := crawl.MaxTotalBytes - progress.BytesFetched
+				if remainingBytes <= 0 {
+					resources = append(resources, converter.CrawlResource{
+						URL:       imgURL.String(),
+						MediaType: "application/octet-stream",
+						Failure:   strPtr(converter.CrawlByteLimitFailure),
+					})
+					continue
+				}
+
+				res, err := fetcher.Fetch(imgURL.String(), deadline.Sub(time.Now()), remainingBytes)
 				if err != nil {
 					resources = append(resources, converter.CrawlResource{
 						URL:       imgURL.String(),
 						MediaType: "application/octet-stream",
-						Failure:   strPtr(err.Error()),
+						Failure:   strPtr(crawlFailureForFetchError(err, remainingBytes, crawl.MaxTotalBytes)),
+					})
+				} else if progress.BytesFetched+len(res.Bytes) > crawl.MaxTotalBytes {
+					resources = append(resources, converter.CrawlResource{
+						URL:       imgURL.String(),
+						MediaType: "application/octet-stream",
+						Failure:   strPtr(converter.CrawlByteLimitFailure),
 					})
 				} else {
 					progress.BytesFetched += len(res.Bytes)
@@ -781,6 +807,13 @@ func executeCrawl(id uuid.UUID, jobs *JobManager, fetcher *SharedFetcher, browse
 	}
 
 	return result, progress, nil
+}
+
+func crawlFailureForFetchError(err error, remainingBytes, maxTotalBytes int) string {
+	if fetchErr, ok := err.(*FetchError); ok && fetchErr.Code == "response_too_large" && remainingBytes < maxTotalBytes {
+		return converter.CrawlByteLimitFailure
+	}
+	return err.Error()
 }
 
 func fetchHTML(fetcher *SharedFetcher, urlStr string, timeout time.Duration, maxBytes int) (*FetchedResponse, error) {

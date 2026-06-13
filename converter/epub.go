@@ -16,6 +16,12 @@ type EpubResource struct {
 	Bytes     []byte
 }
 
+type navEntry struct {
+	Title    string
+	Href     string
+	Children []*navEntry
+}
+
 func generateSingleEPUB(metadata *SanitizedMetadata, chapter *Chapter, resources []EpubResource) ([]byte, error) {
 	return generateEPUB(metadata, []*Chapter{chapter}, resources)
 }
@@ -139,12 +145,7 @@ func packageOPF(metadata *SanitizedMetadata, chapters []*Chapter, resources []Ep
 
 func navXHTML(language string, chapters []*Chapter) string {
 	var entries strings.Builder
-	for i, ch := range chapters {
-		entries.WriteString(fmt.Sprintf(
-			`      <li><a href="%s">%s</a></li>`+"\n",
-			escapeXMLAttr(chapterHref(i)), escapeXMLText(ch.Title),
-		))
-	}
+	renderNavEntries(&entries, buildNavEntries(chapters), 3)
 
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="%s" xml:lang="%s">
@@ -161,6 +162,82 @@ func navXHTML(language string, chapters []*Chapter) string {
 </body>
 </html>
 `, escapeXMLAttr(language), escapeXMLAttr(language), entries.String())
+}
+
+func buildNavEntries(chapters []*Chapter) []*navEntry {
+	var roots []*navEntry
+	for i, ch := range chapters {
+		path := normalizedNavigationPath(ch)
+		href := chapterHref(i)
+		parent := &roots
+		for _, segment := range path[:len(path)-1] {
+			group := findNavEntry(*parent, segment)
+			if group == nil {
+				group = &navEntry{Title: segment}
+				*parent = append(*parent, group)
+			}
+			parent = &group.Children
+		}
+		*parent = append(*parent, &navEntry{
+			Title: path[len(path)-1],
+			Href:  href,
+		})
+	}
+	return roots
+}
+
+func normalizedNavigationPath(ch *Chapter) []string {
+	var path []string
+	for _, segment := range ch.NavigationPath {
+		clean := sanitizeMetadataValue(segment, "")
+		if clean != "" {
+			path = append(path, clean)
+		}
+	}
+	if len(path) == 0 {
+		path = append(path, sanitizeMetadataValue(ch.Title, "Untitled Chapter"))
+	}
+	return path
+}
+
+func findNavEntry(entries []*navEntry, title string) *navEntry {
+	for _, entry := range entries {
+		if entry.Href == "" && entry.Title == title {
+			return entry
+		}
+	}
+	return nil
+}
+
+func renderNavEntries(output *strings.Builder, entries []*navEntry, indentLevel int) {
+	for _, entry := range entries {
+		indent := strings.Repeat("  ", indentLevel)
+		output.WriteString(indent)
+		output.WriteString("<li>")
+		if entry.Href != "" {
+			output.WriteString(`<a href="`)
+			output.WriteString(escapeXMLAttr(entry.Href))
+			output.WriteString(`">`)
+			output.WriteString(escapeXMLText(entry.Title))
+			output.WriteString("</a>")
+		} else {
+			output.WriteString("<span>")
+			output.WriteString(escapeXMLText(entry.Title))
+			output.WriteString("</span>")
+		}
+		if len(entry.Children) == 0 {
+			output.WriteString("</li>\n")
+			continue
+		}
+		output.WriteString("\n")
+		output.WriteString(indent)
+		output.WriteString("  <ol>\n")
+		renderNavEntries(output, entry.Children, indentLevel+2)
+		output.WriteString(indent)
+		output.WriteString("  </ol>\n")
+		output.WriteString(indent)
+		output.WriteString("</li>\n")
+	}
 }
 
 func chapterHref(index int) string {

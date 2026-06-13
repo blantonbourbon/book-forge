@@ -2,6 +2,7 @@ package converter
 
 import (
 	"net/url"
+	"reflect"
 	"testing"
 )
 
@@ -128,4 +129,104 @@ func TestCollectImageResourcesSuppressesTimeLimitWarning(t *testing.T) {
 			t.Fatalf("did not expect a warning for the time-limit-skipped image, got %+v", w)
 		}
 	}
+}
+
+func TestConvertCrawlDoesNotFloodWarningsForOmittedLinks(t *testing.T) {
+	html := `<!doctype html>
+<html lang="en">
+  <body>
+    <article>
+      <h1>Start</h1>
+      <p>Readable crawl start content.</p>
+      <a href="one.html">One</a>
+      <a href="two.html">Two</a>
+      <a href="three.html">Three</a>
+    </article>
+  </body>
+</html>`
+
+	result, err := ConvertCrawl(CrawlInput{
+		StartURL: "https://example.com/book/index.html",
+		Pages: []CrawlPage{{
+			URL:  "https://example.com/book/index.html",
+			HTML: &html,
+		}},
+		Metadata: BookMetadata{
+			Title:    "Test Crawl",
+			Language: "en",
+		},
+		Options: ConversionOptions{IncludeImages: false},
+		Crawl: CrawlOptions{
+			PrefixURL:         "https://example.com/book/",
+			MaxDepth:          1,
+			MaxPages:          2,
+			MaxTotalBytes:     1024 * 1024,
+			MaxDurationMillis: 30000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConvertCrawl returned error: %v", err)
+	}
+
+	if got := warningCount(result.Warnings, "page_fetch_failed"); got != 0 {
+		t.Fatalf("expected omitted links not to be reported as fetch failures, got %d warnings: %+v", got, result.Warnings)
+	}
+	if got := warningCount(result.Warnings, "crawl_page_limit"); got > 1 {
+		t.Fatalf("expected page-limit warnings to be aggregated, got %d warnings: %+v", got, result.Warnings)
+	}
+}
+
+func TestCrawlNavigationPathUsesURLDirectories(t *testing.T) {
+	prefix, err := url.Parse("https://xiaolinnote.com/ai/")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		raw   string
+		title string
+		want  []string
+	}{
+		{
+			name:  "prefix root",
+			raw:   "https://xiaolinnote.com/ai/",
+			title: "大模型面试题",
+			want:  []string{"大模型面试题"},
+		},
+		{
+			name:  "directory chapter",
+			raw:   "https://xiaolinnote.com/ai/rag/1_whatisrag.html",
+			title: "1. 什么是 RAG？",
+			want:  []string{"RAG", "1. 什么是 RAG？"},
+		},
+		{
+			name:  "directory index page",
+			raw:   "https://xiaolinnote.com/ai/agent/",
+			title: "Agent 面试题介绍",
+			want:  []string{"Agent", "Agent 面试题介绍"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page, err := url.Parse(tt.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := crawlNavigationPath(page, prefix, tt.title); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("crawlNavigationPath() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func warningCount(warnings []ConversionWarning, code string) int {
+	count := 0
+	for _, warning := range warnings {
+		if warning.Code == code {
+			count++
+		}
+	}
+	return count
 }

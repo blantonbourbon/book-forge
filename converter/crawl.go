@@ -103,6 +103,7 @@ func convertCrawl(input CrawlInput) (*ConversionResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		ch.NavigationPath = crawlNavigationPath(p.url, prefixURL, p.analysis.Title)
 		warnings = append(warnings, ch.Warnings...)
 		chapters = append(chapters, ch)
 	}
@@ -169,12 +170,18 @@ func discoverPages(
 		key := normalizePageURL(pageURL)
 		source, ok := pageLookup[key]
 		if !ok {
-			pushWarningOnce(warnings, warningKeys, "page_fetch_failed", "Page was skipped because it could not be fetched.", strPtr(affected))
 			continue
 		}
 
 		if source.failure != nil {
-			pushWarningOnce(warnings, warningKeys, "page_fetch_failed", "Page was skipped: "+safeWarningDetail(*source.failure), strPtr(affected))
+			switch *source.failure {
+			case CrawlTimeLimitFailure:
+				pushWarningOnce(warnings, warningKeys, "crawl_time_limit", "Crawl stopped because the configured time limit was reached.", nil)
+			case CrawlByteLimitFailure:
+				pushWarningOnce(warnings, warningKeys, "crawl_byte_limit", "Pages were skipped because the configured crawl byte limit was reached.", nil)
+			default:
+				pushWarningOnce(warnings, warningKeys, "page_fetch_failed", "Page was skipped: "+safeWarningDetail(*source.failure), strPtr(affected))
+			}
 			continue
 		}
 
@@ -216,13 +223,12 @@ func discoverPages(
 				if seen[candidateKey] {
 					continue
 				}
-				candidateAffected := urlWithoutFragment(candidate)
 				if depth+1 > crawlOptions.MaxDepth {
-					pushWarningOnce(warnings, warningKeys, "crawl_depth_limit", "Page was skipped because the configured crawl depth limit was reached.", strPtr(candidateAffected))
+					pushWarningOnce(warnings, warningKeys, "crawl_depth_limit", "Pages were skipped because the configured crawl depth limit was reached.", nil)
 					continue
 				}
 				if scheduledPages >= pageLimit {
-					pushWarningOnce(warnings, warningKeys, "crawl_page_limit", "Page was skipped because the configured crawl page limit was reached.", strPtr(candidateAffected))
+					pushWarningOnce(warnings, warningKeys, "crawl_page_limit", "Pages were skipped because the configured crawl page limit was reached.", nil)
 					continue
 				}
 				seen[candidateKey] = true
@@ -280,6 +286,10 @@ func collectImageResources(
 				if *source.failure == CrawlTimeLimitFailure {
 					continue
 				}
+				if *source.failure == CrawlByteLimitFailure {
+					pushWarningOnce(warnings, warningKeys, "crawl_byte_limit", "Images were skipped because the configured crawl byte limit was reached.", nil)
+					continue
+				}
 				pushWarningOnce(warnings, warningKeys, "image_fetch_failed", "Image was skipped: "+safeWarningDetail(*source.failure), strPtr(affected))
 				continue
 			}
@@ -306,6 +316,77 @@ func collectImageResources(
 	}
 
 	return resources, packagedPaths
+}
+
+func crawlNavigationPath(pageURL, prefixURL *url.URL, title string) []string {
+	cleanTitle := sanitizeMetadataValue(title, "Untitled Chapter")
+	if pageURL == nil || prefixURL == nil {
+		return []string{cleanTitle}
+	}
+
+	pagePath := strings.Trim(pageURL.EscapedPath(), "/")
+	prefixPath := strings.Trim(prefixURL.EscapedPath(), "/")
+	if prefixPath != "" {
+		if pagePath == prefixPath {
+			return []string{cleanTitle}
+		}
+		prefixPath += "/"
+		if !strings.HasPrefix(pagePath, prefixPath) {
+			return []string{cleanTitle}
+		}
+		pagePath = strings.TrimPrefix(pagePath, prefixPath)
+	}
+
+	pagePath = strings.Trim(pagePath, "/")
+	if pagePath == "" {
+		return []string{cleanTitle}
+	}
+
+	segments := strings.Split(pagePath, "/")
+	groupSegments := segments[:len(segments)-1]
+	if len(groupSegments) == 0 && strings.HasSuffix(pageURL.Path, "/") {
+		groupSegments = segments
+	}
+
+	navPath := make([]string, 0, len(groupSegments)+1)
+	for _, segment := range groupSegments {
+		if label := humanizeURLSegment(segment); label != "" {
+			navPath = append(navPath, label)
+		}
+	}
+	navPath = append(navPath, cleanTitle)
+	return navPath
+}
+
+func humanizeURLSegment(segment string) string {
+	decoded, err := url.PathUnescape(segment)
+	if err != nil {
+		decoded = segment
+	}
+	decoded = strings.TrimSpace(decoded)
+	if decoded == "" {
+		return ""
+	}
+	decoded = strings.TrimSuffix(decoded, ".html")
+	decoded = strings.TrimSuffix(decoded, ".htm")
+	decoded = strings.NewReplacer("-", " ", "_", " ").Replace(decoded)
+	words := strings.Fields(decoded)
+	for i, word := range words {
+		words[i] = humanizeURLWord(word)
+	}
+	return strings.Join(words, " ")
+}
+
+func humanizeURLWord(word string) string {
+	if word == "" {
+		return ""
+	}
+	lower := strings.ToLower(word)
+	runes := []rune(lower)
+	if len(runes) <= 3 {
+		return strings.ToUpper(lower)
+	}
+	return strings.ToUpper(string(runes[:1])) + string(runes[1:])
 }
 
 func buildPageLookup(pages []CrawlPage) map[string]*pageSource {

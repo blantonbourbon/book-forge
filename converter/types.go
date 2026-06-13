@@ -58,7 +58,10 @@ type CrawlResource struct {
 	Failure   *string `json:"failure,omitempty"`
 }
 
-const CrawlTimeLimitFailure = "crawl_time_limit"
+const (
+	CrawlTimeLimitFailure = "crawl_time_limit"
+	CrawlByteLimitFailure = "crawl_byte_limit"
+)
 
 type CrawlInput struct {
 	StartURL  string            `json:"startUrl"`
