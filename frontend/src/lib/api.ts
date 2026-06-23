@@ -45,6 +45,22 @@ export interface MetadataPreview {
   finalUrl: string;
 }
 
+export interface AuthUser {
+  id: number;
+  login: string;
+  name?: string;
+  avatarUrl?: string;
+  email?: string;
+}
+
+export interface AuthSession {
+  authRequired: boolean;
+  authenticated: boolean;
+  user?: AuthUser;
+  loginUrl?: string;
+  logoutUrl?: string;
+}
+
 export interface ApiClientOptions {
   apiOrigin?: string;
   fetcher?: FetchLike;
@@ -110,6 +126,28 @@ export async function previewMetadata(
     params.set("useBrowser", "true");
   }
   return requestJson<MetadataPreview>(`/api/preview?${params}`, options);
+}
+
+export async function getAuthSession(
+  options: ApiClientOptions = {},
+): Promise<AuthSession> {
+  return requestJson<AuthSession>("/api/auth/session", options);
+}
+
+export async function signOut(
+  options: ApiClientOptions = {},
+): Promise<AuthSession> {
+  return requestJson<AuthSession>("/api/auth/logout", options, {
+    method: "POST",
+  });
+}
+
+export function loginUrlForReturnTo(
+  returnTo = getBrowserReturnTo(),
+  apiOrigin = resolveApiOrigin(),
+): string {
+  const params = new URLSearchParams({ returnTo });
+  return apiUrl(`/api/auth/login?${params}`, apiOrigin);
 }
 
 export function downloadUrlForJob(
@@ -202,4 +240,12 @@ function getBrowserLocation(): Location | undefined {
   return typeof globalThis.location === "undefined"
     ? undefined
     : globalThis.location;
+}
+
+function getBrowserReturnTo(): string {
+  const location = getBrowserLocation();
+  if (!location) {
+    return "/";
+  }
+  return `${location.pathname}${location.search}${location.hash}`;
 }

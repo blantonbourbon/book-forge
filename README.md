@@ -22,6 +22,37 @@ npm run build --prefix frontend
 HOST=127.0.0.1 PORT=3100 STATIC_DIR=frontend/dist go run .
 ```
 
+## GitHub sign-in
+
+When `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set, Book Forge requires a signed GitHub session for conversion API routes. Register the OAuth callback URL as:
+
+```text
+http://127.0.0.1:3100/api/auth/callback
+```
+
+For deployment, use the public origin instead, for example:
+
+```text
+https://<your-app-host>/api/auth/callback
+```
+
+Local example:
+
+```bash
+GITHUB_CLIENT_ID=<client-id> \
+GITHUB_CLIENT_SECRET=<client-secret> \
+AUTH_SESSION_SECRET=<random-32-plus-character-secret> \
+AUTH_BASE_URL=http://127.0.0.1:3100 \
+HOST=127.0.0.1 PORT=3100 STATIC_DIR=frontend/dist go run .
+```
+
+`AUTH_SESSION_SECRET` and `AUTH_BASE_URL` are required when GitHub sign-in is enabled.
+
+Optional settings:
+
+- `AUTH_ALLOWED_GITHUB_LOGINS`: comma-separated GitHub usernames allowed to sign in. If unset, any GitHub account that authorizes the app can use it.
+- `GITHUB_OAUTH_SCOPES`: GitHub OAuth scopes. Defaults to `read:user`.
+
 For frontend development, start Astro on port `3101` while the backend runs on `3100`:
 
 ```bash

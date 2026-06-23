@@ -28,6 +28,7 @@ type AppState struct {
 	Fetcher        *SharedFetcher
 	BrowserFetcher *BrowserFetcher
 	StaticRoot     string
+	Auth           *AuthService
 }
 
 func NewAppState(fetcher *SharedFetcher) *AppState {

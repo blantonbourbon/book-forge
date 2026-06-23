@@ -27,10 +27,22 @@ func SetupRouter(state *AppState) *gin.Engine {
 	api := r.Group("/api")
 	{
 		api.GET("/health", handleHealth)
-		api.GET("/preview", handlePreviewMetadata(state))
-		api.POST("/jobs", handleCreateJob(state))
-		api.GET("/jobs/:id", handleGetJob(state))
-		api.GET("/jobs/:id/download", handleDownload(state))
+		auth := api.Group("/auth")
+		{
+			auth.GET("/session", handleAuthSession(state))
+			auth.GET("/login", handleAuthLogin(state))
+			auth.GET("/callback", handleAuthCallback(state))
+			auth.POST("/logout", handleAuthLogout(state))
+		}
+
+		protected := api.Group("")
+		if state.Auth != nil {
+			protected.Use(state.Auth.RequireAuth())
+		}
+		protected.GET("/preview", handlePreviewMetadata(state))
+		protected.POST("/jobs", handleCreateJob(state))
+		protected.GET("/jobs/:id", handleGetJob(state))
+		protected.GET("/jobs/:id/download", handleDownload(state))
 	}
 
 	r.NoRoute(handleStatic(state))
@@ -43,6 +55,63 @@ func handleHealth(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, HealthResponse{Status: "healthy"})
+}
+
+func handleAuthSession(state *AppState) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if state.Auth == nil {
+			c.JSON(http.StatusOK, AuthSessionResponse{
+				AuthRequired:  false,
+				Authenticated: true,
+			})
+			return
+		}
+
+		user, ok := state.Auth.SessionUser(c.Request)
+		response := AuthSessionResponse{
+			AuthRequired:  true,
+			Authenticated: ok,
+			LoginURL:      "/api/auth/login",
+			LogoutURL:     "/api/auth/logout",
+		}
+		if ok {
+			response.User = user
+		}
+		c.JSON(http.StatusOK, response)
+	}
+}
+
+func handleAuthLogin(state *AppState) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if state.Auth == nil {
+			RespondError(c, NotFoundError("auth_not_configured", "GitHub sign-in is not configured."))
+			return
+		}
+		state.Auth.HandleLogin(c)
+	}
+}
+
+func handleAuthCallback(state *AppState) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if state.Auth == nil {
+			RespondError(c, NotFoundError("auth_not_configured", "GitHub sign-in is not configured."))
+			return
+		}
+		state.Auth.HandleCallback(c)
+	}
+}
+
+func handleAuthLogout(state *AppState) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if state.Auth == nil {
+			c.JSON(http.StatusOK, AuthSessionResponse{
+				AuthRequired:  false,
+				Authenticated: true,
+			})
+			return
+		}
+		state.Auth.HandleLogout(c)
+	}
 }
 
 func handleCreateJob(state *AppState) gin.HandlerFunc {

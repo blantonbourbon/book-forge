@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   createJob,
   downloadUrlForJob,
+  getAuthSession,
   getJob,
+  loginUrlForReturnTo,
   previewMetadata,
   resolveApiOrigin,
+  signOut,
 } from "./api";
 
 describe("API origin resolution", () => {
@@ -152,6 +155,61 @@ describe("Book Forge API client", () => {
         init: undefined,
       },
     ]);
+  });
+
+  it("reads the current auth session", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        authRequired: true,
+        authenticated: true,
+        user: { id: 123, login: "octocat" },
+        loginUrl: "/api/auth/login",
+        logoutUrl: "/api/auth/logout",
+      });
+    };
+
+    const session = await getAuthSession({ apiOrigin: "", fetcher });
+
+    expect(session.user?.login).toBe("octocat");
+    expect(calls).toEqual([{ url: "/api/auth/session", init: undefined }]);
+  });
+
+  it("posts sign-out requests", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        authRequired: true,
+        authenticated: false,
+        loginUrl: "/api/auth/login",
+      });
+    };
+
+    const session = await signOut({
+      apiOrigin: "http://127.0.0.1:3100",
+      fetcher,
+    });
+
+    expect(session.authenticated).toBe(false);
+    expect(calls).toEqual([
+      {
+        url: "http://127.0.0.1:3100/api/auth/logout",
+        init: { method: "POST" },
+      },
+    ]);
+  });
+
+  it("builds a login URL with a safe return target", () => {
+    expect(loginUrlForReturnTo("/current?tab=jobs", "")).toBe(
+      "/api/auth/login?returnTo=%2Fcurrent%3Ftab%3Djobs",
+    );
+    expect(
+      loginUrlForReturnTo("/current?tab=jobs", "http://127.0.0.1:3100"),
+    ).toBe(
+      "http://127.0.0.1:3100/api/auth/login?returnTo=%2Fcurrent%3Ftab%3Djobs",
+    );
   });
 
   it("gates downloads to completed jobs with a current download URL", () => {

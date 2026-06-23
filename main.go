@@ -26,6 +26,11 @@ func main() {
 	if sidecarURL := os.Getenv("CLOAK_SIDECAR_URL"); sidecarURL != "" {
 		state.BrowserFetcher = server.NewBrowserFetcher(sidecarURL)
 	}
+	auth, err := server.NewAuthServiceFromEnv()
+	if err != nil {
+		log.Fatalf("auth configuration failed: %v", err)
+	}
+	state.Auth = auth
 
 	r := server.SetupRouter(state)
 

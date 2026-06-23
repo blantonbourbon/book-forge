@@ -33,24 +33,37 @@ const initialRecovery = refreshRecoveryPresentation();
   <body>
     <a class="skip-link" href="#conversion-form">Skip to form</a>
     <header class="hero">
-      <h1>
-        <svg
-          class="hero-icon"
-          xmlns="http://www.w3.org/2000/svg"
-          width="1em"
-          height="1em"
-          fill="currentColor"
-          viewBox="0 0 256 256"
-          aria-hidden="true"
-          ><path
-            d="M232,48H160a40,40,0,0,0-32,16A40,40,0,0,0,96,48H24a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8H96a24,24,0,0,1,24,24,8,8,0,0,0,16,0,24,24,0,0,1,24-24h72a8,8,0,0,0,8-8V56A8,8,0,0,0,232,48ZM96,192H32V64H96a24,24,0,0,1,24,24V200A39.81,39.81,0,0,0,96,192Zm128,0H160a39.81,39.81,0,0,0-24,8V88a24,24,0,0,1,24-24h64Z"
-          ></path></svg
-        >
-        Book Forge
-      </h1>
-      <p class="hero-copy">
-        Convert web pages into EPUB downloads. No account needed.
-      </p>
+      <div class="hero-topline">
+        <div>
+          <h1>
+            <svg
+              class="hero-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              width="1em"
+              height="1em"
+              fill="currentColor"
+              viewBox="0 0 256 256"
+              aria-hidden="true"
+              ><path
+                d="M232,48H160a40,40,0,0,0-32,16A40,40,0,0,0,96,48H24a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8H96a24,24,0,0,1,24,24,8,8,0,0,0,16,0,24,24,0,0,1,24-24h72a8,8,0,0,0,8-8V56A8,8,0,0,0,232,48ZM96,192H32V64H96a24,24,0,0,1,24,24V200A39.81,39.81,0,0,0,96,192Zm128,0H160a39.81,39.81,0,0,0-24,8V88a24,24,0,0,1,24-24h64Z"
+              ></path></svg
+            >
+            Book Forge
+          </h1>
+          <p class="hero-copy">Convert web pages into EPUB downloads.</p>
+        </div>
+        <div id="auth-panel" class="auth-panel" hidden>
+          <a id="login-link" class="auth-link" href="/api/auth/login" hidden>
+            Sign in with GitHub
+          </a>
+          <div id="user-menu" class="user-menu" hidden>
+            <span id="user-label" class="user-label"></span>
+            <button id="logout-button" class="secondary-button" type="button">
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
     </header>
 
     <main>
@@ -409,10 +422,14 @@ const initialRecovery = refreshRecoveryPresentation();
       import {
         ApiClientError,
         createJob,
+        getAuthSession,
         getJob,
+        loginUrlForReturnTo,
         previewMetadata,
+        signOut,
         type ApiErrorBody,
         type ApiWarning,
+        type AuthSession,
         type JobResponse,
         type MetadataPreview,
       } from "../lib/api";
@@ -456,6 +473,13 @@ const initialRecovery = refreshRecoveryPresentation();
       const errorList = document.querySelector<HTMLElement>("#error-list");
       const downloadLink =
         document.querySelector<HTMLAnchorElement>("#download-link");
+      const authPanel = document.querySelector<HTMLElement>("#auth-panel");
+      const loginLink =
+        document.querySelector<HTMLAnchorElement>("#login-link");
+      const userMenu = document.querySelector<HTMLElement>("#user-menu");
+      const userLabel = document.querySelector<HTMLElement>("#user-label");
+      const logoutButton =
+        document.querySelector<HTMLButtonElement>("#logout-button");
 
       const summaryJob = document.querySelector<HTMLElement>("#summary-job");
       const summaryMode = document.querySelector<HTMLElement>("#summary-mode");
@@ -498,6 +522,7 @@ const initialRecovery = refreshRecoveryPresentation();
       let lastAutoTitle = "";
       let lastAutoAuthor = "";
       let lastAutoDescription = "";
+      let authSession: AuthSession | null = null;
 
       initialize();
 
@@ -508,13 +533,18 @@ const initialRecovery = refreshRecoveryPresentation();
 
         values = readFormValues();
         renderMode();
+        renderFieldAvailability();
         renderSubmitState();
         form.addEventListener("input", handleFormInput);
         form.addEventListener("change", handleFormInput);
         form.addEventListener("submit", handleSubmit);
+        logoutButton?.addEventListener("click", () => {
+          void handleLogout();
+        });
         fieldControls.sourceUrl?.addEventListener("blur", () => {
           void maybePreviewMetadata();
         });
+        void refreshAuthSession();
       }
 
       function handleFormInput() {
@@ -528,6 +558,10 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       async function maybePreviewMetadata() {
+        if (!canUseAuthenticatedApi()) {
+          return;
+        }
+
         values = readFormValues();
         const sourceUrl = values.sourceUrl.trim();
         if (!isPreviewableURL(sourceUrl)) {
@@ -631,6 +665,12 @@ const initialRecovery = refreshRecoveryPresentation();
       async function handleSubmit(event: SubmitEvent) {
         event.preventDefault();
         values = readFormValues();
+
+        if (!canUseAuthenticatedApi()) {
+          window.location.href = loginUrlForReturnTo();
+          return;
+        }
+
         const validation = validateForm(values);
         renderValidation(validation, true);
 
@@ -679,6 +719,77 @@ const initialRecovery = refreshRecoveryPresentation();
         }
       }
 
+      async function refreshAuthSession() {
+        try {
+          authSession = await getAuthSession();
+        } catch {
+          authSession = {
+            authRequired: true,
+            authenticated: false,
+            loginUrl: "/api/auth/login",
+          };
+        }
+        renderAuthState();
+        renderSubmitState();
+      }
+
+      async function handleLogout() {
+        if (!logoutButton) {
+          return;
+        }
+
+        logoutButton.disabled = true;
+        try {
+          authSession = await signOut();
+        } catch {
+          authSession = {
+            authRequired: true,
+            authenticated: false,
+            loginUrl: "/api/auth/login",
+          };
+        } finally {
+          logoutButton.disabled = false;
+        }
+        clearPollTimer();
+        currentJobId = null;
+        setPhase("idle");
+        renderProgress(0, false);
+        renderDownload(null);
+        renderMessages([], []);
+        renderAuthState();
+        announce("Signed out.");
+      }
+
+      function renderAuthState() {
+        const requiresAuth = authSession?.authRequired ?? true;
+        if (authPanel) {
+          authPanel.hidden = !requiresAuth;
+        }
+        renderFieldAvailability();
+        if (!requiresAuth) {
+          return;
+        }
+
+        const authenticated = authSession?.authenticated ?? false;
+        if (loginLink) {
+          loginLink.href = loginUrlForReturnTo();
+          loginLink.hidden = authenticated;
+        }
+        if (userMenu) {
+          userMenu.hidden = !authenticated;
+        }
+        if (userLabel) {
+          const login = authSession?.user?.login ?? "GitHub";
+          userLabel.textContent = `@${login}`;
+        }
+      }
+
+      function canUseAuthenticatedApi(): boolean {
+        return authSession !== null
+          ? !authSession.authRequired || authSession.authenticated
+          : false;
+      }
+
       function startPolling(jobId: string) {
         const poll = async () => {
           try {
@@ -723,21 +834,33 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       function renderMode() {
-        if (!crawlOptions) {
-          return;
-        }
-
         const isCrawl = values.mode === "crawl";
-        crawlOptions.hidden = !isCrawl;
-        for (const field of [
-          "crawlPrefixUrl",
-          "maxDepth",
-          "maxPages",
-        ] as const) {
-          const control = fieldControls[field];
-          if (control instanceof HTMLInputElement) {
-            control.disabled = !isCrawl;
-            control.required = isCrawl;
+        if (crawlOptions) {
+          crawlOptions.hidden = !isCrawl;
+        }
+        renderFieldAvailability();
+      }
+
+      function renderFieldAvailability() {
+        const authBlocked = !canUseAuthenticatedApi();
+        const isCrawl = values.mode === "crawl";
+
+        for (const [field, control] of Object.entries(fieldControls) as Array<
+          [FormField, HTMLElement | undefined]
+        >) {
+          if (
+            control instanceof HTMLInputElement ||
+            control instanceof HTMLSelectElement ||
+            control instanceof HTMLTextAreaElement
+          ) {
+            const crawlField =
+              field === "crawlPrefixUrl" ||
+              field === "maxDepth" ||
+              field === "maxPages";
+            control.disabled = authBlocked || (crawlField && !isCrawl);
+            if (crawlField) {
+              control.required = isCrawl;
+            }
           }
         }
       }
@@ -870,13 +993,18 @@ const initialRecovery = refreshRecoveryPresentation();
           return;
         }
 
+        const authBlocked = !canUseAuthenticatedApi();
         const active = !canSubmitInPhase(phase);
-        submitButton.disabled = active;
+        submitButton.disabled = active || authSession === null;
         submitButton.setAttribute("aria-busy", String(active));
         statusCard.dataset.phase = phase;
         statusCard.setAttribute("aria-busy", String(active));
 
-        if (phase === "submitting") {
+        if (authSession === null) {
+          submitLabel.textContent = "Checking sign-in…";
+        } else if (authBlocked) {
+          submitLabel.textContent = "Sign in with GitHub";
+        } else if (phase === "submitting") {
           submitLabel.textContent = "Starting…";
         } else if (phase === "polling") {
           submitLabel.textContent = "Converting…";
