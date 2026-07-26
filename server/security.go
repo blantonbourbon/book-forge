@@ -1,7 +1,7 @@
 package server
 
 import (
-	"fmt"
+	"context"
 	"net"
 	"net/url"
 	"strings"
@@ -69,22 +69,18 @@ func resolveVettedAddrs(u *url.URL) (*VettedResolvedAddrs, error) {
 }
 
 func lookupHostWithTimeout(host string, timeout time.Duration) ([]net.IP, error) {
-	type result struct {
-		ips []net.IP
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		ips, err := net.LookupIP(host)
-		ch <- result{ips, err}
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	select {
-	case r := <-ch:
-		return r.ips, r.err
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("DNS lookup timed out")
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
 	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		ips = append(ips, addr.IP)
+	}
+	return ips, nil
 }
 
 func validateURLWithoutDNS(u *url.URL) error {

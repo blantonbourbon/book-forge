@@ -10,4 +10,7 @@ cloak-sidecar/node_modules/
 .env.*
 *.log
 *.tmp
+.tmp*
+exports/
+.tmp-export-invest-nav.mjs
 Dockerfile

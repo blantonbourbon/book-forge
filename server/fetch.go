@@ -275,6 +275,9 @@ func clientWithDialer(domain string, ips []net.IP, port string) *http.Client {
 				addr = net.JoinHostPort(ips[0].String(), port)
 				return dialer.DialContext(ctx, "tcp", addr)
 			},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
 		},
 	}
 }
@@ -480,6 +483,12 @@ func (f *BrowserFetcher) Fetch(urlStr string, timeout time.Duration, maxBytes in
 	finalURL := result.FinalURL
 	if finalURL == "" {
 		finalURL = urlStr
+	}
+	if err := ValidateNetworkURL(finalURL); err != nil {
+		return nil, NewFetchError("unsafe_url", err.Error())
+	}
+	if maxBytes > 0 && len(result.HTML) > maxBytes {
+		return nil, NewFetchError("response_too_large", "Fetched content exceeded the configured byte limit.")
 	}
 	mediaType := result.MediaType
 	if mediaType == "" {

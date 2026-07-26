@@ -137,7 +137,7 @@ func NewAuthServiceFromEnv() (*AuthService, error) {
 		AuthorizeURL:  defaultGitHubAuthorizeURL,
 		TokenURL:      defaultGitHubTokenURL,
 		UserURL:       defaultGitHubUserURL,
-		HTTPClient:    http.DefaultClient,
+		HTTPClient:    &http.Client{Timeout: 15 * time.Second},
 		SessionTTL:    defaultSessionTTL,
 		StateTTL:      defaultStateTTL,
 	})

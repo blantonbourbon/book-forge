@@ -15,4 +15,10 @@ elif [ -f frontend/package.json ]; then
   npm install --prefix frontend
 fi
 
+if [ -f cloak-sidecar/package-lock.json ]; then
+  npm ci --prefix cloak-sidecar
+elif [ -f cloak-sidecar/package.json ]; then
+  npm install --prefix cloak-sidecar
+fi
+
 go mod download

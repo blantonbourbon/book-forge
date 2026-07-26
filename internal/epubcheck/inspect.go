@@ -81,17 +81,24 @@ func parsePackageDoc(f *zip.File, report *InspectionReport) {
 		case xml.StartElement:
 			switch el.Name.Local {
 			case "item":
-				var mediaType, href string
+				var mediaType, href, properties string
 				for _, attr := range el.Attr {
 					switch attr.Name.Local {
 					case "media-type":
 						mediaType = attr.Value
 					case "href":
 						href = attr.Value
+					case "properties":
+						properties = attr.Value
 					}
 				}
 				if mediaType == "application/xhtml+xml" {
-					report.ChapterCount++
+					isNav := isNavItem(href, properties)
+					if isNav {
+						report.HasNav = true
+					} else {
+						report.ChapterCount++
+					}
 					if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
 						report.ExternalRefs = append(report.ExternalRefs, href)
 					}
@@ -101,9 +108,21 @@ func parsePackageDoc(f *zip.File, report *InspectionReport) {
 						report.ExternalRefs = append(report.ExternalRefs, href)
 					}
 				}
-			case "itemref":
-				report.ChapterCount = max(report.ChapterCount, report.ChapterCount+0)
 			}
 		}
 	}
+}
+
+func isNavItem(href, properties string) bool {
+	for _, prop := range strings.Fields(properties) {
+		if prop == "nav" {
+			return true
+		}
+	}
+	base := href
+	if i := strings.LastIndexByte(href, '/'); i >= 0 {
+		base = href[i+1:]
+	}
+	// Treat nav.xhtml (and names containing "nav") as the navigation document.
+	return strings.EqualFold(base, "nav.xhtml") || strings.Contains(strings.ToLower(base), "nav")
 }

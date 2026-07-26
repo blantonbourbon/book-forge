@@ -29,9 +29,29 @@ func stripHTMLTags(raw string) string {
 	return output.String()
 }
 
+// isXMLChar reports whether ch is a legal XML 1.0 character.
+// Allowed: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+func isXMLChar(ch rune) bool {
+	switch {
+	case ch == 0x9 || ch == 0xA || ch == 0xD:
+		return true
+	case ch >= 0x20 && ch <= 0xD7FF:
+		return true
+	case ch >= 0xE000 && ch <= 0xFFFD:
+		return true
+	case ch >= 0x10000 && ch <= 0x10FFFF:
+		return true
+	default:
+		return false
+	}
+}
+
 func escapeXMLText(input string) string {
 	var output strings.Builder
 	for _, ch := range input {
+		if !isXMLChar(ch) {
+			continue
+		}
 		switch ch {
 		case '&':
 			output.WriteString("&amp;")
@@ -49,6 +69,9 @@ func escapeXMLText(input string) string {
 func escapeXMLAttr(input string) string {
 	var output strings.Builder
 	for _, ch := range input {
+		if !isXMLChar(ch) {
+			continue
+		}
 		switch ch {
 		case '&':
 			output.WriteString("&amp;")

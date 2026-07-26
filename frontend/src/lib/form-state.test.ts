@@ -18,7 +18,6 @@ describe("conversion form defaults and validation", () => {
       description: "",
       includeImages: true,
       useBrowser: false,
-      chapterStrategy: "source-order",
       outputTarget: "epub",
       crawlPrefixUrl: "",
       maxDepth: "3",
@@ -87,6 +86,29 @@ describe("conversion form defaults and validation", () => {
     };
 
     expect(validateForm(crawl).canSubmit).toBe(true);
+  });
+
+  it("blocks IPv4-mapped IPv6 addresses that embed private or loopback IPv4", () => {
+    for (const sourceUrl of [
+      "http://[::ffff:127.0.0.1]/",
+      "https://[::ffff:192.168.1.1]/",
+      "http://[::ffff:10.0.0.1]/",
+      "https://[0:0:0:0:0:ffff:127.0.0.1]/",
+      "http://[::ffff:7f00:1]/",
+    ]) {
+      expect(
+        validateForm({ ...DEFAULT_FORM_VALUES, sourceUrl }).errors.sourceUrl,
+      ).toContain(
+        "Source URL cannot target localhost, private, link-local, or metadata addresses.",
+      );
+    }
+
+    expect(
+      validateForm({
+        ...DEFAULT_FORM_VALUES,
+        sourceUrl: "http://[::ffff:8.8.8.8]/",
+      }).canSubmit,
+    ).toBe(true);
   });
 
   it("validates crawl prefix, depth, and page limits explicitly", () => {

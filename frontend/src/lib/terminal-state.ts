@@ -174,7 +174,7 @@ function emptyDownloadGate(): DownloadGate {
   };
 }
 
-function clampProgress(value: number): number {
+export function clampProgress(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
   }

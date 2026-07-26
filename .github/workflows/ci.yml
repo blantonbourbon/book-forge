@@ -9,10 +9,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -74,6 +79,7 @@ jobs:
   deploy:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -94,7 +100,8 @@ jobs:
 
       - name: Set up Fly CLI
         if: steps.fly-token.outputs.available == 'true'
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        # superfly/flyctl-actions master as of 2026-04-08 (node runtime upgrade)
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
 
       - name: Deploy
         if: steps.fly-token.outputs.available == 'true'

@@ -115,7 +115,11 @@ func NewNoReadableContentError() *ConversionError {
 }
 
 func NewEpubGenerationError(message string) *ConversionError {
-	return &ConversionError{Code: "epub_generation_failed", Message: "The EPUB could not be generated from the supplied content."}
+	msg := "The EPUB could not be generated from the supplied content."
+	if message != "" {
+		msg = "EPUB generation failed: " + message
+	}
+	return &ConversionError{Code: "epub_generation_failed", Message: msg}
 }
 
 func BoundaryName() string {

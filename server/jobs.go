@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ const (
 	maxCrawlPages         = 100
 	maxTotalBytes         = 20 * 1024 * 1024
 	maxDurationMillis     = 180000
+	maxConcurrentJobs     = 4
+	maxSinglePageImages   = 50
 	jobRetention          = 1 * time.Hour
 	jobSweepInterval      = 1 * time.Minute
 )
@@ -41,11 +44,13 @@ func NewAppState(fetcher *SharedFetcher) *AppState {
 type JobManager struct {
 	mu   sync.RWMutex
 	jobs map[uuid.UUID]*JobRecord
+	sem  chan struct{}
 }
 
 func NewJobManager() *JobManager {
 	m := &JobManager{
 		jobs: make(map[uuid.UUID]*JobRecord),
+		sem:  make(chan struct{}, maxConcurrentJobs),
 	}
 	go m.sweepLoop()
 	return m
@@ -175,6 +180,7 @@ type Artifact struct {
 
 type JobRecord struct {
 	ID          uuid.UUID
+	OwnerLogin  string
 	Status      JobStatus
 	Summary     JobSummary
 	Progress    JobProgress
@@ -232,39 +238,62 @@ func (r *JobRecord) Response() JobResponse {
 	return resp
 }
 
-func (m *JobManager) CreateJob(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary) (*JobResponse, error) {
+func (m *JobManager) CreateJob(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summary JobSummary, ownerLogin string) (*JobResponse, error) {
+	select {
+	case m.sem <- struct{}{}:
+	default:
+		return nil, NewAPIError(http.StatusTooManyRequests, "too_many_jobs", "Too many concurrent jobs; try again later.")
+	}
+
 	id := uuid.New()
 	record := &JobRecord{
-		ID:       id,
-		Status:   StatusQueued,
-		Summary:  summary,
-		Progress: queuedProgress(&summary),
+		ID:         id,
+		OwnerLogin: ownerLogin,
+		Status:     StatusQueued,
+		Summary:    summary,
+		Progress:   queuedProgress(&summary),
 	}
 	m.mu.Lock()
 	m.jobs[id] = record
 	m.mu.Unlock()
 
-	go m.executeJob(id, fetcher, browserFetcher, summary)
+	go func() {
+		defer func() { <-m.sem }()
+		m.executeJob(id, fetcher, browserFetcher, summary)
+	}()
 
-	return m.GetResponse(id)
+	return m.GetResponse(id, ownerLogin)
 }
 
-func (m *JobManager) GetResponse(id uuid.UUID) (*JobResponse, error) {
+func (m *JobManager) authorizeJob(record *JobRecord, ownerLogin string) error {
+	if record.OwnerLogin != "" && record.OwnerLogin != ownerLogin {
+		return NotFoundError("job_not_found", "The requested job was not found.")
+	}
+	return nil
+}
+
+func (m *JobManager) GetResponse(id uuid.UUID, ownerLogin string) (*JobResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	record, ok := m.jobs[id]
 	if !ok {
-		return nil, &APIError{Status: 404, Body: ErrorBody{Code: "job_not_found", Message: "The requested job was not found."}}
+		return nil, NotFoundError("job_not_found", "The requested job was not found.")
+	}
+	if err := m.authorizeJob(record, ownerLogin); err != nil {
+		return nil, err
 	}
 	resp := record.Response()
 	return &resp, nil
 }
 
-func (m *JobManager) Artifact(id uuid.UUID) (JobStatus, *Artifact) {
+func (m *JobManager) Artifact(id uuid.UUID, ownerLogin string) (JobStatus, *Artifact) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	record, ok := m.jobs[id]
 	if !ok {
+		return "", nil
+	}
+	if err := m.authorizeJob(record, ownerLogin); err != nil {
 		return "", nil
 	}
 	return record.Status, record.Artifact
@@ -476,13 +505,13 @@ func crawlFromRequest(crawl *APICrawlOptions, sourceURL *url.URL, fields *[]stri
 		durationMillis = *crawl.MaxDurationMillis
 	}
 
-	if depth > maxCrawlDepth {
+	if depth < 0 || depth > maxCrawlDepth {
 		*fields = append(*fields, "crawl.maxDepth")
 	}
-	if pages == 0 || pages > maxCrawlPages {
+	if pages < 1 || pages > maxCrawlPages {
 		*fields = append(*fields, "crawl.maxPages")
 	}
-	if totalBytes == 0 || totalBytes > maxTotalBytes {
+	if totalBytes < 1 || totalBytes > maxTotalBytes {
 		*fields = append(*fields, "crawl.maxTotalBytes")
 	}
 	if durationMillis <= 0 || durationMillis > int64(maxDurationMillis) {
@@ -536,7 +565,11 @@ func executeSingle(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summa
 	if summary.Options.IncludeImages {
 		imageURLs := ExtractImageURLs(html, baseURL)
 		seen := make(map[string]bool)
+		imagesFetched := 0
 		for _, imgURL := range imageURLs {
+			if imagesFetched >= maxSinglePageImages {
+				break
+			}
 			if imgURL.Scheme != "http" && imgURL.Scheme != "https" {
 				continue
 			}
@@ -546,16 +579,26 @@ func executeSingle(fetcher *SharedFetcher, browserFetcher *BrowserFetcher, summa
 			}
 			seen[key] = true
 
-			res, err := fetcher.Fetch(imgURL.String(), time.Duration(defaultFetchTimeoutMs)*time.Millisecond, defaultMaxTotalBytes)
+			remainingBytes := defaultMaxTotalBytes - progress.BytesFetched
+			if remainingBytes <= 0 {
+				break
+			}
+
+			res, err := fetcher.Fetch(imgURL.String(), time.Duration(defaultFetchTimeoutMs)*time.Millisecond, remainingBytes)
 			if err != nil {
 				resources = append(resources, converter.CrawlResource{
 					URL:       imgURL.String(),
 					MediaType: "application/octet-stream",
 					Failure:   strPtr(err.Error()),
 				})
+				imagesFetched++
 				continue
 			}
+			if progress.BytesFetched+len(res.Bytes) > defaultMaxTotalBytes {
+				break
+			}
 			progress.BytesFetched += len(res.Bytes)
+			imagesFetched++
 			resources = append(resources, converter.CrawlResource{
 				URL:       imgURL.String(),
 				MediaType: res.MediaType,

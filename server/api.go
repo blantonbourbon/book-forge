@@ -162,9 +162,14 @@ func handleCreateJob(state *AppState) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := state.Jobs.CreateJob(state.Fetcher, state.BrowserFetcher, *summary)
+		ownerLogin := sessionOwnerLogin(state, c)
+		resp, err := state.Jobs.CreateJob(state.Fetcher, state.BrowserFetcher, *summary, ownerLogin)
 		if err != nil {
-			RespondError(c, NewAPIError(http.StatusInternalServerError, "job_creation_failed", err.Error()))
+			if apiErr, ok := err.(*APIError); ok {
+				RespondError(c, apiErr)
+			} else {
+				RespondError(c, NewAPIError(http.StatusInternalServerError, "job_creation_failed", err.Error()))
+			}
 			return
 		}
 
@@ -186,7 +191,7 @@ func handleGetJob(state *AppState) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := state.Jobs.GetResponse(id)
+		resp, err := state.Jobs.GetResponse(id, sessionOwnerLogin(state, c))
 		if err != nil {
 			if apiErr, ok := err.(*APIError); ok {
 				RespondError(c, apiErr)
@@ -214,7 +219,7 @@ func handleDownload(state *AppState) gin.HandlerFunc {
 			return
 		}
 
-		status, artifact := state.Jobs.Artifact(id)
+		status, artifact := state.Jobs.Artifact(id, sessionOwnerLogin(state, c))
 		if status == "" {
 			RespondError(c, NotFoundError("job_not_found", "The requested job was not found."))
 			return
@@ -279,22 +284,55 @@ func handleStatic(state *AppState) gin.HandlerFunc {
 	}
 }
 
+func sessionOwnerLogin(state *AppState, c *gin.Context) string {
+	if state.Auth == nil {
+		return ""
+	}
+	user, ok := state.Auth.SessionUser(c.Request)
+	if !ok || user == nil {
+		return ""
+	}
+	return user.Login
+}
+
 func staticTarget(root, requestPath string) (string, error) {
 	if err := rejectSuspiciousPath(requestPath); err != nil {
 		return "", err
 	}
 
-	relative := strings.TrimPrefix(requestPath, "/")
-	clean := filepath.Join(root, relative)
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", NotFoundError("static_asset_not_found", "The requested asset was not found.")
+	}
 
-	if info, err := os.Stat(clean); err == nil && !info.IsDir() {
-		return clean, nil
+	relative := strings.Trim(requestPath, "/")
+	target := filepath.Join(rootAbs, relative)
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return "", NotFoundError("static_asset_not_found", "The requested asset was not found.")
+	}
+
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", BadRequestError("static_path_rejected", "The requested static path was not accepted.")
+	}
+
+	if info, err := os.Stat(targetAbs); err == nil && !info.IsDir() {
+		return targetAbs, nil
 	}
 
 	if shouldFallbackToIndex(relative) {
-		indexPath := filepath.Join(root, "index.html")
-		if _, err := os.Stat(indexPath); err == nil {
-			return indexPath, nil
+		indexPath := filepath.Join(rootAbs, "index.html")
+		indexAbs, err := filepath.Abs(indexPath)
+		if err != nil {
+			return "", NotFoundError("static_asset_not_found", "The requested asset was not found.")
+		}
+		indexRel, err := filepath.Rel(rootAbs, indexAbs)
+		if err != nil || strings.HasPrefix(indexRel, "..") {
+			return "", BadRequestError("static_path_rejected", "The requested static path was not accepted.")
+		}
+		if _, err := os.Stat(indexAbs); err == nil {
+			return indexAbs, nil
 		}
 	}
 

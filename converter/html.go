@@ -3,6 +3,7 @@ package converter
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -388,33 +389,33 @@ func makeSafeHref(rawHref string, sourceURL *url.URL, ids map[string]bool, linkR
 		return safeCrawlHref(href, sourceURL, ids, linkRewrites)
 	}
 
-	u, err := url.Parse(href)
-	if err == nil {
-		switch u.Scheme {
-		case "http", "https":
-			if sameDocument(sourceURL, u) {
-				if frag := sanitizeID(u.Fragment); frag != "" && ids[frag] {
-					return "#" + frag
-				}
-				return ""
-			}
-			return href
-		case "mailto":
-			return href
-		default:
-			return ""
-		}
-	}
-
+	// Resolve relative URLs against the source page first so same-document
+	// fragments and absolute http(s)/mailto links are handled uniformly.
 	resolved, err := sourceURL.Parse(href)
 	if err != nil {
 		return ""
 	}
-	frag := sanitizeID(resolved.Fragment)
-	if sameDocument(sourceURL, resolved) && frag != "" && ids[frag] {
-		return "#" + frag
+	switch strings.ToLower(resolved.Scheme) {
+	case "http", "https":
+		if sameDocument(sourceURL, resolved) {
+			if frag := sanitizeID(resolved.Fragment); frag != "" && ids[frag] {
+				return "#" + frag
+			}
+			return ""
+		}
+		// Prefer the original absolute form when the href was already absolute.
+		if u, err := url.Parse(href); err == nil {
+			scheme := strings.ToLower(u.Scheme)
+			if scheme == "http" || scheme == "https" {
+				return href
+			}
+		}
+		return resolved.String()
+	case "mailto":
+		return resolved.String()
+	default:
+		return ""
 	}
-	return ""
 }
 
 func safeCrawlHref(href string, sourceURL *url.URL, ids map[string]bool, rewrites *LinkRewriteContext) string {
@@ -422,7 +423,7 @@ func safeCrawlHref(href string, sourceURL *url.URL, ids map[string]bool, rewrite
 	if err != nil {
 		return ""
 	}
-	switch resolved.Scheme {
+	switch strings.ToLower(resolved.Scheme) {
 	case "http", "https":
 		return rewriteHTTPHref(resolved, sourceURL, ids, rewrites)
 	case "mailto":
@@ -457,10 +458,13 @@ func rewriteHTTPHref(resolved, sourceURL *url.URL, ids map[string]bool, rewrites
 		return ""
 	}
 
+	// Chapter bodies live under EPUB/chapters/, so cross-chapter hrefs must
+	// use the sibling basename (chapter-N.xhtml), not the OPF-relative path.
+	bodyRel := path.Base(targetPath)
 	if fragValid {
-		return targetPath + "#" + frag
+		return bodyRel + "#" + frag
 	}
-	return targetPath
+	return bodyRel
 }
 
 func makeSafeImageSrc(rawSrc string, sourceURL *url.URL, imageRewrites *ImageRewriteContext) string {

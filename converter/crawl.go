@@ -1,8 +1,10 @@
 package converter
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -207,34 +209,31 @@ func discoverPages(
 			continue
 		}
 
-		stopAfterCurrent := crawlOptions.MaxDurationMillis == 0
-		if stopAfterCurrent {
-			pushWarningOnce(warnings, warningKeys, "crawl_time_limit", "Crawl stopped because the configured time limit was reached.", nil)
-		} else {
-			for _, rawLink := range analysis.Links {
-				candidate := resolvePageLink(rawLink, pageURL)
-				if candidate == nil {
-					continue
-				}
-				if !isInScope(candidate, startURL, prefixURL) {
-					continue
-				}
-				candidateKey := normalizePageURL(candidate)
-				if seen[candidateKey] {
-					continue
-				}
-				if depth+1 > crawlOptions.MaxDepth {
-					pushWarningOnce(warnings, warningKeys, "crawl_depth_limit", "Pages were skipped because the configured crawl depth limit was reached.", nil)
-					continue
-				}
-				if scheduledPages >= pageLimit {
-					pushWarningOnce(warnings, warningKeys, "crawl_page_limit", "Pages were skipped because the configured crawl page limit was reached.", nil)
-					continue
-				}
-				seen[candidateKey] = true
-				scheduledPages++
-				queue = append(queue, queueEntry{url: withoutFragment(candidate), depth: depth + 1})
+		// MaxDurationMillis == 0 means unlimited duration; the time check above
+		// only applies when MaxDurationMillis > 0.
+		for _, rawLink := range analysis.Links {
+			candidate := resolvePageLink(rawLink, pageURL)
+			if candidate == nil {
+				continue
 			}
+			if !isInScope(candidate, startURL, prefixURL) {
+				continue
+			}
+			candidateKey := normalizePageURL(candidate)
+			if seen[candidateKey] {
+				continue
+			}
+			if depth+1 > crawlOptions.MaxDepth {
+				pushWarningOnce(warnings, warningKeys, "crawl_depth_limit", "Pages were skipped because the configured crawl depth limit was reached.", nil)
+				continue
+			}
+			if scheduledPages >= pageLimit {
+				pushWarningOnce(warnings, warningKeys, "crawl_page_limit", "Pages were skipped because the configured crawl page limit was reached.", nil)
+				continue
+			}
+			seen[candidateKey] = true
+			scheduledPages++
+			queue = append(queue, queueEntry{url: withoutFragment(candidate), depth: depth + 1})
 		}
 
 		discovered = append(discovered, &discoveredPage{
@@ -243,10 +242,6 @@ func discoverPages(
 			html:     htmlStr,
 			analysis: analysis,
 		})
-
-		if stopAfterCurrent {
-			break
-		}
 	}
 
 	return discovered
@@ -305,17 +300,52 @@ func collectImageResources(
 				continue
 			}
 
+			imageBytes := source.bytes
+			if isSVGMedia(mediaType, imageBytes) {
+				imageBytes = sanitizeSVG(imageBytes)
+				if len(imageBytes) == 0 {
+					pushWarningOnce(warnings, warningKeys, "image_fetch_failed", "Image was skipped because SVG sanitization removed all content.", strPtr(affected))
+					continue
+				}
+			}
+
 			packagePath := conflictFreeResourcePath(imageURL, extension, usedPaths)
 			packagedPaths[key] = "../" + packagePath
 			resources = append(resources, EpubResource{
 				Path:      packagePath,
 				MediaType: mediaType,
-				Bytes:     source.bytes,
+				Bytes:     imageBytes,
 			})
 		}
 	}
 
 	return resources, packagedPaths
+}
+
+func isSVGMedia(mediaType string, data []byte) bool {
+	if strings.Contains(strings.ToLower(mediaType), "svg") {
+		return true
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return false
+	}
+	lower := bytes.ToLower(trimmed)
+	return bytes.HasPrefix(lower, []byte("<svg")) ||
+		(bytes.HasPrefix(lower, []byte("<?xml")) && bytes.Contains(lower, []byte("<svg")))
+}
+
+var (
+	svgScriptTagRe = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script\s*>|<script\b[^/]*/>`)
+	svgEventAttrRe = regexp.MustCompile(`(?i)\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)`)
+	svgJSURLRe     = regexp.MustCompile(`(?i)(href|xlink:href|src)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|\s*javascript:[^\s>]+)`)
+)
+
+func sanitizeSVG(data []byte) []byte {
+	cleaned := svgScriptTagRe.ReplaceAll(data, nil)
+	cleaned = svgEventAttrRe.ReplaceAll(cleaned, nil)
+	cleaned = svgJSURLRe.ReplaceAll(cleaned, nil)
+	return bytes.TrimSpace(cleaned)
 }
 
 func crawlNavigationPath(pageURL, prefixURL *url.URL, title string) []string {

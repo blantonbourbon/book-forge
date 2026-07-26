@@ -1,5 +1,4 @@
 export type ConversionMode = "single" | "crawl";
-export type ChapterStrategy = "source-order" | "single-document";
 export type OutputTarget = "epub";
 export type UiPhase =
   | "idle"
@@ -16,7 +15,6 @@ export interface FormValues {
   description: string;
   includeImages: boolean;
   useBrowser: boolean;
-  chapterStrategy: ChapterStrategy;
   outputTarget: OutputTarget;
   crawlPrefixUrl: string;
   maxDepth: string;
@@ -67,7 +65,6 @@ export const DEFAULT_FORM_VALUES: FormValues = {
   description: "",
   includeImages: true,
   useBrowser: false,
-  chapterStrategy: "source-order",
   outputTarget: "epub",
   crawlPrefixUrl: "",
   maxDepth: "3",
@@ -199,18 +196,6 @@ export function buildCreateJobPayload(values: FormValues): CreateJobPayload {
   return payload;
 }
 
-export function outputOptionSummary(values: FormValues): string {
-  const imageSummary = values.includeImages
-    ? "Images will be embedded when safe."
-    : "Images will be skipped without broken references.";
-  const chapterSummary =
-    values.chapterStrategy === "source-order"
-      ? "Chapters follow source page order."
-      : "Readable content is kept together where possible.";
-  const browserNote = values.useBrowser ? " Browser rendering enabled." : "";
-  return `${imageSummary} ${chapterSummary}${browserNote} Output is EPUB download only.`;
-}
-
 const fieldOrder: FormField[] = [
   "sourceUrl",
   "mode",
@@ -219,7 +204,6 @@ const fieldOrder: FormField[] = [
   "description",
   "includeImages",
   "useBrowser",
-  "chapterStrategy",
   "outputTarget",
   "crawlPrefixUrl",
   "maxDepth",
@@ -299,6 +283,11 @@ function hostLooksUnsafe(hostname: string): boolean {
     return true;
   }
 
+  const mappedIpv4 = extractIpv4MappedAddress(host);
+  if (mappedIpv4 !== null) {
+    return ipv4LooksUnsafe(mappedIpv4);
+  }
+
   const isIpv6Literal = host.includes(":");
   if (
     isIpv6Literal &&
@@ -310,6 +299,51 @@ function hostLooksUnsafe(hostname: string): boolean {
     return true;
   }
 
+  return ipv4LooksUnsafe(host);
+}
+
+/** Extract dotted IPv4 from IPv4-mapped IPv6 forms (`::ffff:…` / `…:ffff:…`). */
+function extractIpv4MappedAddress(host: string): string | null {
+  let rest: string | null = null;
+  if (host.startsWith("::ffff:")) {
+    rest = host.slice("::ffff:".length);
+  } else {
+    const marker = ":ffff:";
+    const index = host.indexOf(marker);
+    if (index !== -1) {
+      rest = host.slice(index + marker.length);
+    }
+  }
+
+  if (rest === null || rest === "") {
+    return null;
+  }
+
+  if (rest.includes(".")) {
+    return rest;
+  }
+
+  // Hex form, e.g. ::ffff:7f00:1 → 127.0.0.1
+  const parts = rest.split(":");
+  if (parts.length === 2) {
+    const high = Number.parseInt(parts[0] ?? "", 16);
+    const low = Number.parseInt(parts[1] ?? "", 16);
+    if (
+      Number.isInteger(high) &&
+      Number.isInteger(low) &&
+      high >= 0 &&
+      high <= 0xffff &&
+      low >= 0 &&
+      low <= 0xffff
+    ) {
+      return `${(high >> 8) & 255}.${high & 255}.${(low >> 8) & 255}.${low & 255}`;
+    }
+  }
+
+  return null;
+}
+
+function ipv4LooksUnsafe(host: string): boolean {
   const ipv4 = host.split(".").map((part) => Number(part));
   if (
     ipv4.length === 4 &&

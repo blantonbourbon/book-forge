@@ -1,8 +1,12 @@
 package converter
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -229,4 +233,178 @@ func warningCount(warnings []ConversionWarning, code string) int {
 		}
 	}
 	return count
+}
+
+func TestCrossChapterRewriteUsesBasename(t *testing.T) {
+	page1 := `<!doctype html>
+<html lang="en">
+  <body>
+    <article>
+      <h1>Chapter One</h1>
+      <p>First page content.</p>
+      <a href="chapter-two.html">Go to chapter two</a>
+      <a href="chapter-two.html#section-b">Go to section B</a>
+    </article>
+  </body>
+</html>`
+	page2 := `<!doctype html>
+<html lang="en">
+  <body>
+    <article>
+      <h1>Chapter Two</h1>
+      <p id="section-b">Second page content.</p>
+      <a href="chapter-one.html">Back to chapter one</a>
+    </article>
+  </body>
+</html>`
+
+	result, err := ConvertCrawl(CrawlInput{
+		StartURL: "https://example.com/book/chapter-one.html",
+		Pages: []CrawlPage{
+			{URL: "https://example.com/book/chapter-one.html", HTML: &page1},
+			{URL: "https://example.com/book/chapter-two.html", HTML: &page2},
+		},
+		Metadata: BookMetadata{Title: "Cross Chapter", Language: "en"},
+		Options:  ConversionOptions{IncludeImages: false},
+		Crawl: CrawlOptions{
+			PrefixURL:         "https://example.com/book/",
+			MaxDepth:          2,
+			MaxPages:          10,
+			MaxTotalBytes:     1024 * 1024,
+			MaxDurationMillis: 0,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConvertCrawl returned error: %v", err)
+	}
+	if result.ChapterCount != 2 {
+		t.Fatalf("expected 2 chapters, got %d", result.ChapterCount)
+	}
+
+	// Body XHTML inside the EPUB must use sibling basenames.
+	chapter1 := epubEntry(t, result.EPUBBytes, "EPUB/chapters/chapter-1.xhtml")
+	if !strings.Contains(chapter1, `href="chapter-2.xhtml"`) {
+		t.Fatalf("chapter body missing basename cross-chapter href; xhtml:\n%s", chapter1)
+	}
+	if strings.Contains(chapter1, `href="chapters/chapter-2.xhtml"`) {
+		t.Fatalf("chapter body must not use OPF-relative chapters/ path; xhtml:\n%s", chapter1)
+	}
+	if !strings.Contains(chapter1, `href="chapter-2.xhtml#section-b"`) {
+		t.Fatalf("chapter body missing basename+fragment href; xhtml:\n%s", chapter1)
+	}
+
+	// OPF/nav still use full chapterHref paths.
+	opf := epubEntry(t, result.EPUBBytes, "EPUB/package.opf")
+	if !strings.Contains(opf, `href="chapters/chapter-2.xhtml"`) {
+		t.Fatalf("OPF should keep chapters/ prefix; opf:\n%s", opf)
+	}
+	nav := epubEntry(t, result.EPUBBytes, "EPUB/nav.xhtml")
+	if !strings.Contains(nav, `href="chapters/chapter-2.xhtml"`) {
+		t.Fatalf("nav should keep chapters/ prefix; nav:\n%s", nav)
+	}
+}
+
+func TestMaxDurationMillisZeroDoesNotStopCrawl(t *testing.T) {
+	page1 := `<!doctype html>
+<html lang="en">
+  <body>
+    <article>
+      <h1>Start</h1>
+      <p>Readable crawl start content.</p>
+      <a href="two.html">Two</a>
+    </article>
+  </body>
+</html>`
+	page2 := `<!doctype html>
+<html lang="en">
+  <body>
+    <article>
+      <h1>Two</h1>
+      <p>Second page readable content.</p>
+    </article>
+  </body>
+</html>`
+
+	result, err := ConvertCrawl(CrawlInput{
+		StartURL: "https://example.com/book/index.html",
+		Pages: []CrawlPage{
+			{URL: "https://example.com/book/index.html", HTML: &page1},
+			{URL: "https://example.com/book/two.html", HTML: &page2},
+		},
+		Metadata: BookMetadata{Title: "Unlimited Duration", Language: "en"},
+		Options:  ConversionOptions{IncludeImages: false},
+		Crawl: CrawlOptions{
+			PrefixURL:         "https://example.com/book/",
+			MaxDepth:          2,
+			MaxPages:          10,
+			MaxTotalBytes:     1024 * 1024,
+			MaxDurationMillis: 0, // unlimited
+		},
+	})
+	if err != nil {
+		t.Fatalf("ConvertCrawl returned error: %v", err)
+	}
+	if result.ChapterCount < 2 {
+		t.Fatalf("expected multi-page crawl with MaxDurationMillis=0, got %d chapters; warnings=%+v", result.ChapterCount, result.Warnings)
+	}
+	if got := warningCount(result.Warnings, "crawl_time_limit"); got != 0 {
+		t.Fatalf("expected no crawl_time_limit warning for MaxDurationMillis=0, got %d: %+v", got, result.Warnings)
+	}
+}
+
+func TestMakeSafeHrefRelativeSameDocumentFragment(t *testing.T) {
+	source, err := url.Parse("https://example.com/docs/page.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{"intro": true, "section-2": true}
+
+	tests := []struct {
+		name string
+		href string
+		want string
+	}{
+		{name: "fragment only", href: "#intro", want: "#intro"},
+		{name: "relative same-doc with fragment", href: "page.html#section-2", want: "#section-2"},
+		{name: "dot-relative same-doc fragment", href: "./page.html#intro", want: "#intro"},
+		{name: "absolute same-doc fragment", href: "https://example.com/docs/page.html#intro", want: "#intro"},
+		{name: "absolute external kept", href: "https://other.example.com/x", want: "https://other.example.com/x"},
+		{name: "mailto kept", href: "mailto:a@b.com", want: "mailto:a@b.com"},
+		{name: "javascript dropped", href: "javascript:alert(1)", want: ""},
+		{name: "unknown fragment dropped", href: "#missing", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := makeSafeHref(tt.href, source, ids, nil)
+			if got != tt.want {
+				t.Fatalf("makeSafeHref(%q) = %q, want %q", tt.href, got, tt.want)
+			}
+		})
+	}
+}
+
+func epubEntry(t *testing.T, epub []byte, name string) string {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(epub), int64(len(epub)))
+	if err != nil {
+		t.Fatalf("open epub zip: %v", err)
+	}
+	for _, f := range zr.File {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", name, err)
+		}
+		defer rc.Close()
+		data, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(data)
+	}
+	t.Fatalf("epub entry %q not found", name)
+	return ""
 }

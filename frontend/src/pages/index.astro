@@ -224,35 +224,16 @@ const initialRecovery = refreshRecoveryPresentation();
               </label>
             </div>
 
-            <div class="field-grid">
-              <div class="field">
-                <label for="chapter-strategy">Chapters</label>
-                <select id="chapter-strategy" name="chapterStrategy">
-                  <option
-                    value="source-order"
-                    selected={defaults.chapterStrategy === "source-order"}
-                  >
-                    Source order
-                  </option>
-                  <option
-                    value="single-document"
-                    selected={defaults.chapterStrategy === "single-document"}
-                  >
-                    Keep content grouped
-                  </option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="output-target">Output</label>
-                <select id="output-target" name="outputTarget">
-                  <option
-                    value="epub"
-                    selected={defaults.outputTarget === "epub"}
-                  >
-                    EPUB (.epub)
-                  </option>
-                </select>
-              </div>
+            <div class="field">
+              <label for="output-target">Output</label>
+              <select id="output-target" name="outputTarget">
+                <option
+                  value="epub"
+                  selected={defaults.outputTarget === "epub"}
+                >
+                  EPUB (.epub)
+                </option>
+              </select>
             </div>
           </fieldset>
 
@@ -445,6 +426,7 @@ const initialRecovery = refreshRecoveryPresentation();
         type ValidationResult,
       } from "../lib/form-state";
       import {
+        clampProgress,
         jobPresentationForJob,
         pollingFailurePresentation,
         preStartFailurePresentation,
@@ -497,8 +479,6 @@ const initialRecovery = refreshRecoveryPresentation();
         includeImages:
           document.querySelector<HTMLInputElement>("#include-images")!,
         useBrowser: document.querySelector<HTMLInputElement>("#use-browser")!,
-        chapterStrategy:
-          document.querySelector<HTMLSelectElement>("#chapter-strategy")!,
         outputTarget:
           document.querySelector<HTMLSelectElement>("#output-target")!,
         crawlPrefixUrl:
@@ -506,6 +486,10 @@ const initialRecovery = refreshRecoveryPresentation();
         maxDepth: document.querySelector<HTMLInputElement>("#max-depth")!,
         maxPages: document.querySelector<HTMLInputElement>("#max-pages")!,
       };
+
+      const modeRadios = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[name="mode"]'),
+      );
 
       const fieldErrors = new Map<FormField, HTMLElement>(
         Array.from(
@@ -518,6 +502,7 @@ const initialRecovery = refreshRecoveryPresentation();
       let phase: UiPhase = "idle";
       let currentJobId: string | null = null;
       let pollTimer: number | undefined;
+      let pollInFlight = false;
       let metadataPreviewRequest = 0;
       let lastAutoTitle = "";
       let lastAutoAuthor = "";
@@ -549,9 +534,15 @@ const initialRecovery = refreshRecoveryPresentation();
 
       function handleFormInput() {
         const previousMode = values.mode;
-        values = readFormValues();
-        if (previousMode !== values.mode) {
-          values = applyMode(values, values.mode);
+        // Disabled crawl fields are omitted from FormData; enable them before
+        // re-reading when the mode changes so depth/pages keep their values.
+        const next = readFormValues();
+        if (previousMode !== next.mode) {
+          values = applyMode(next, next.mode);
+          renderMode();
+          values = applyMode(readFormValues(), values.mode);
+        } else {
+          values = next;
         }
         renderMode();
         renderValidation(validateForm(values), false);
@@ -791,18 +782,32 @@ const initialRecovery = refreshRecoveryPresentation();
       }
 
       function startPolling(jobId: string) {
+        clearPollTimer();
+        pollInFlight = false;
+        let stopped = false;
+
         const poll = async () => {
+          if (stopped || jobId !== currentJobId || pollInFlight) {
+            return;
+          }
+
+          pollInFlight = true;
           try {
             const job = await getJob(jobId);
-            if (jobId !== currentJobId) {
+            if (stopped || jobId !== currentJobId) {
               return;
             }
             renderJob(job);
             if (isTerminal(job)) {
+              stopped = true;
               clearPollTimer();
               setPhase(job.status);
             }
           } catch (error) {
+            if (stopped || jobId !== currentJobId) {
+              return;
+            }
+            stopped = true;
             clearPollTimer();
             const apiError = normalizeError(error);
             const presentation = pollingFailurePresentation(apiError);
@@ -811,10 +816,12 @@ const initialRecovery = refreshRecoveryPresentation();
             renderMessages([], presentation.errors);
             renderDownload(presentation.download.href);
             announce(presentation.statusText);
+          } finally {
+            pollInFlight = false;
           }
         };
 
-        pollTimer = window.setInterval(poll, 500);
+        pollTimer = window.setInterval(poll, 1000);
         void poll();
       }
 
@@ -862,6 +869,10 @@ const initialRecovery = refreshRecoveryPresentation();
               control.required = isCrawl;
             }
           }
+        }
+
+        for (const radio of modeRadios) {
+          radio.disabled = authBlocked;
         }
       }
 
@@ -1046,7 +1057,10 @@ const initialRecovery = refreshRecoveryPresentation();
         }
 
         const data = new FormData(form);
-        const mode = data.get("mode") === "crawl" ? "crawl" : "single";
+        // Prefer DOM state for mode/crawl fields: disabled controls are omitted
+        // from FormData, which previously produced false crawl validation errors.
+        const selectedMode = modeRadios.find((radio) => radio.checked)?.value;
+        const mode = selectedMode === "crawl" ? "crawl" : "single";
         return {
           sourceUrl: stringValue(data.get("sourceUrl")),
           mode,
@@ -1055,15 +1069,23 @@ const initialRecovery = refreshRecoveryPresentation();
           description: stringValue(data.get("description")),
           includeImages: data.has("includeImages"),
           useBrowser: data.has("useBrowser"),
-          chapterStrategy:
-            data.get("chapterStrategy") === "single-document"
-              ? "single-document"
-              : "source-order",
           outputTarget: "epub",
-          crawlPrefixUrl: stringValue(data.get("crawlPrefixUrl")),
-          maxDepth: stringValue(data.get("maxDepth")),
-          maxPages: stringValue(data.get("maxPages")),
+          crawlPrefixUrl: controlValue("crawlPrefixUrl"),
+          maxDepth: controlValue("maxDepth") || cloneDefaultFormValues().maxDepth,
+          maxPages: controlValue("maxPages") || cloneDefaultFormValues().maxPages,
         };
+      }
+
+      function controlValue(field: FormField): string {
+        const control = fieldControls[field];
+        if (
+          control instanceof HTMLInputElement ||
+          control instanceof HTMLSelectElement ||
+          control instanceof HTMLTextAreaElement
+        ) {
+          return control.value;
+        }
+        return "";
       }
 
       function normalizeError(error: unknown): ApiErrorBody {
@@ -1091,13 +1113,6 @@ const initialRecovery = refreshRecoveryPresentation();
 
       function isTerminal(job: JobResponse): boolean {
         return job.status === "completed" || job.status === "failed";
-      }
-
-      function clampProgress(value: number): number {
-        if (!Number.isFinite(value)) {
-          return 0;
-        }
-        return Math.max(0, Math.min(100, Math.round(value)));
       }
 
       function stringValue(value: FormDataEntryValue | null): string {

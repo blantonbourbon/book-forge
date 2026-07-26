@@ -3,9 +3,8 @@ package converter
 import (
 	"fmt"
 	"strings"
+	"time"
 )
-
-const modifiedDate = "2026-05-10T00:00:00Z"
 
 type SanitizedMetadata struct {
 	Title       string `json:"title"`
@@ -29,7 +28,7 @@ func sanitizeMetadata(metadata BookMetadata, sourceURL string) SanitizedMetadata
 		Language:    language,
 		Description: description,
 		Identifier:  identifier,
-		Modified:    modifiedDate,
+		Modified:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	}
 }
 
@@ -62,17 +61,20 @@ func SafeDownloadFilename(title string) string {
 	var filename strings.Builder
 	filename.Grow(len(title) + 5)
 	previousSep := false
+	byteLen := 0
 
 	for _, ch := range title {
-		if len([]byte(filename.String())) >= 80 {
+		if byteLen >= 80 {
 			break
 		}
 		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' {
 			filename.WriteByte(byte(ch | 32))
 			previousSep = false
+			byteLen++
 		} else if !previousSep {
 			filename.WriteByte('-')
 			previousSep = true
+			byteLen++
 		}
 	}
 
