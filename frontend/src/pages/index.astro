@@ -1071,8 +1071,10 @@ const initialRecovery = refreshRecoveryPresentation();
           useBrowser: data.has("useBrowser"),
           outputTarget: "epub",
           crawlPrefixUrl: controlValue("crawlPrefixUrl"),
-          maxDepth: controlValue("maxDepth") || cloneDefaultFormValues().maxDepth,
-          maxPages: controlValue("maxPages") || cloneDefaultFormValues().maxPages,
+          maxDepth:
+            controlValue("maxDepth") || cloneDefaultFormValues().maxDepth,
+          maxPages:
+            controlValue("maxPages") || cloneDefaultFormValues().maxPages,
         };
       }
 
