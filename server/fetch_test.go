@@ -104,9 +104,9 @@ func writeFixture(t *testing.T, root, relPath, contents string) {
 func TestBrowserFetcherEnforcesMaxBytes(t *testing.T) {
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"html":     strings.Repeat("x", 100),
-			"finalUrl": "https://8.8.8.8/",
+			"ok":        true,
+			"html":      strings.Repeat("x", 100),
+			"finalUrl":  "https://8.8.8.8/",
 			"mediaType": "text/html; charset=utf-8",
 		})
 	}))
@@ -129,9 +129,9 @@ func TestBrowserFetcherEnforcesMaxBytes(t *testing.T) {
 func TestBrowserFetcherRejectsUnsafeFinalURL(t *testing.T) {
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"html":     "<html></html>",
-			"finalUrl": "http://127.0.0.1/private",
+			"ok":        true,
+			"html":      "<html></html>",
+			"finalUrl":  "http://127.0.0.1/private",
 			"mediaType": "text/html; charset=utf-8",
 		})
 	}))
